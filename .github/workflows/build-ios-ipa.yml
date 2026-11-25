@@ -9,9 +9,26 @@ on:
 jobs:
   build-ios:
     runs-on: macos-15
+    env:
+      IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
+      IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+      IOS_PROVISION_BASE64: ${{ secrets.IOS_PROVISION_BASE64 }}
+      IOS_BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Detect Signing Mode
+        id: mode
+        run: |
+          if [ -n "$IOS_P12_BASE64" ] && [ -n "$IOS_PROVISION_BASE64" ]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets detected -> Building SIGNED installable IPA"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "No signing secrets configured -> Building UNSIGNED IPA"
+          fi
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -20,7 +37,139 @@ jobs:
         working-directory: ios
         run: xcodegen generate
 
-      - name: Build Unsigned Release App
+      - name: Import Apple Signing Certificate & Provisioning Profile
+        if: steps.mode.outputs.signed == 'true'
+        id: cert
+        run: |
+          set -e
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+          PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
+          PLIST_PATH="$RUNNER_TEMP/profile.plist"
+          KEYCHAIN_PATH="$RUNNER_TEMP/cinecast-signing.keychain-db"
+          KEYCHAIN_PASS="cinecast-ci-temp-pass"
+
+          echo "$IOS_P12_BASE64" | tr -d '\r\n ' | base64 --decode > "$CERT_PATH"
+          echo "$IOS_PROVISION_BASE64" | tr -d '\r\n ' | base64 --decode > "$PROFILE_PATH"
+
+          # Create temporary keychain and import .p12
+          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$IOS_P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -k "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+          # Extract exact code signing identity SHA-1
+          SIGN_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | head -n 1 | awk '{print $2}')
+          if [ -z "$SIGN_IDENTITY" ]; then
+            echo "ERROR: No valid code signing identity found in .p12 (check IOS_P12_PASSWORD)"
+            exit 1
+          fi
+
+          # Decode mobileprovision to inspect UUID, TeamID, Bundle ID, and Export Method
+          security cms -D -i "$PROFILE_PATH" > "$PLIST_PATH"
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" "$PLIST_PATH")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" "$PLIST_PATH")
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" "$PLIST_PATH")
+          APP_ID_FULL=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" "$PLIST_PATH")
+          GET_TASK_ALLOW=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:get-task-allow" "$PLIST_PATH" 2>/dev/null || echo "false")
+
+          # Strip TeamID prefix from application-identifier
+          PROFILE_BUNDLE="${APP_ID_FULL#${TEAM_ID}.}"
+          if [ -n "$IOS_BUNDLE_ID" ]; then
+            BUNDLE_ID="$IOS_BUNDLE_ID"
+          elif [[ "$PROFILE_BUNDLE" == *"*"* ]]; then
+            BUNDLE_ID="com.cinecast.ios"
+          else
+            BUNDLE_ID="$PROFILE_BUNDLE"
+          fi
+
+          # Determine export method (development vs ad-hoc vs enterprise)
+          PROVISIONS_ALL=$(/usr/libexec/PlistBuddy -c "Print :ProvisionsAllDevices" "$PLIST_PATH" 2>/dev/null || echo "false")
+          if [ "$PROVISIONS_ALL" = "true" ]; then
+            EXPORT_METHOD="enterprise"
+          elif [ "$GET_TASK_ALLOW" = "true" ]; then
+            EXPORT_METHOD="development"
+          else
+            EXPORT_METHOD="ad-hoc"
+          fi
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
+
+          echo "identity=$SIGN_IDENTITY" >> "$GITHUB_OUTPUT"
+          echo "uuid=$PROFILE_UUID" >> "$GITHUB_OUTPUT"
+          echo "profile_name=$PROFILE_NAME" >> "$GITHUB_OUTPUT"
+          echo "team_id=$TEAM_ID" >> "$GITHUB_OUTPUT"
+          echo "bundle_id=$BUNDLE_ID" >> "$GITHUB_OUTPUT"
+          echo "export_method=$EXPORT_METHOD" >> "$GITHUB_OUTPUT"
+
+          echo "Resolved Bundle ID: $BUNDLE_ID | Team: $TEAM_ID | Method: $EXPORT_METHOD"
+
+      - name: Build & Export SIGNED IPA
+        if: steps.mode.outputs.signed == 'true'
+        working-directory: ios
+        run: |
+          set -e
+          ARCHIVE_PATH="$RUNNER_TEMP/CineCast.xcarchive"
+          EXPORT_DIR="$RUNNER_TEMP/ExportedIPA"
+          EXPORT_PLIST="$RUNNER_TEMP/ExportOptions.plist"
+
+          xcodebuild \
+            -project CineCast.xcodeproj \
+            -scheme CineCast \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$ARCHIVE_PATH" \
+            PRODUCT_BUNDLE_IDENTIFIER="${{ steps.cert.outputs.bundle_id }}" \
+            DEVELOPMENT_TEAM="${{ steps.cert.outputs.team_id }}" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="${{ steps.cert.outputs.identity }}" \
+            PROVISIONING_PROFILE_SPECIFIER="${{ steps.cert.outputs.uuid }}" \
+            clean archive
+
+          cat > "$EXPORT_PLIST" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>${{ steps.cert.outputs.export_method }}</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>teamID</key>
+            <string>${{ steps.cert.outputs.team_id }}</string>
+            <key>signingCertificate</key>
+            <string>${{ steps.cert.outputs.identity }}</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>${{ steps.cert.outputs.bundle_id }}</key>
+              <string>${{ steps.cert.outputs.uuid }}</string>
+            </dict>
+            <key>compileBitcode</key>
+            <false/>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportOptionsPlist "$EXPORT_PLIST" \
+            -exportPath "$EXPORT_DIR"
+
+          SIGNED_IPA=$(find "$EXPORT_DIR" -name "*.ipa" | head -n 1)
+          cp "$SIGNED_IPA" "CineCast-iOS-v1.1.1-signed.ipa"
+          ls -lh "CineCast-iOS-v1.1.1-signed.ipa"
+
+      - name: Upload SIGNED IPA Artifact
+        if: steps.mode.outputs.signed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: CineCast-iOS-v1.1.1-Signed-IPA
+          path: "ios/CineCast-iOS-v1.1.1-signed.ipa"
+
+      - name: Build UNSIGNED Release App (Fallback)
+        if: steps.mode.outputs.signed != 'true'
         working-directory: ios
         run: |
           xcodebuild \
@@ -33,16 +182,19 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             clean build
-
-      - name: Package IPA
-        working-directory: ios
-        run: |
           mkdir -p Payload
           cp -r build/Build/Products/Release-iphoneos/*.app Payload/
           zip -r "CineCast-iOS-v1.1.1-unsigned.ipa" Payload
 
-      - name: Upload IPA Artifact
+      - name: Upload UNSIGNED IPA Artifact
+        if: steps.mode.outputs.signed != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: CineCast-iOS-v1.1.1-IPA
+          name: CineCast-iOS-v1.1.1-Unsigned-IPA
           path: "ios/CineCast-iOS-v1.1.1-unsigned.ipa"
+
+      - name: Clean up temporary keychain
+        if: always() && steps.mode.outputs.signed == 'true'
+        run: |
+          security delete-keychain "$RUNNER_TEMP/cinecast-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/profile.mobileprovision" "$RUNNER_TEMP/profile.plist"
