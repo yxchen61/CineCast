@@ -1,0 +1,35 @@
+# OS & Editor
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+.idea/
+.vscode/
+
+# Android / Gradle
+android/.gradle/
+android/local.properties
+android/build/
+android/*/build/
+android/captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+*.jks
+*.keystore
+
+# iOS / Xcode
+ios/build/
+ios/Payload/
+ios/*.xcodeproj/
+ios/*.xcworkspace/
+ios/DerivedData/
+*.ipa
+*.xcarchive
+*.mobileprovision
+*.p12
+*.cer
+*.p7b
+xcuserdata/

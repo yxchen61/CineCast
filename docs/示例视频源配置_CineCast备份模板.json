@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "exportedAt": 1763980000000,
+  "sources": [
+    {
+      "id": "jszy_json",
+      "name": "极速资源 (高清秒播)",
+      "type": "MACCMS_JSON",
+      "apiUrl": "https://jszyapi.com/api.php/provide/vod/",
+      "searchable": true,
+      "enabled": true,
+      "group": "真机实测直连"
+    },
+    {
+      "id": "huya_json",
+      "name": "虎牙资源 (高清直链)",
+      "type": "MACCMS_JSON",
+      "apiUrl": "https://www.huyaapi.com/api.php/provide/vod/",
+      "searchable": true,
+      "enabled": true,
+      "group": "真机实测直连"
+    },
+    {
+      "id": "rycj_json",
+      "name": "如意资源 (高清直链)",
+      "type": "MACCMS_JSON",
+      "apiUrl": "https://cj.rycjapi.com/api.php/provide/vod/",
+      "searchable": true,
+      "enabled": true,
+      "group": "真机实测直连"
+    },
+    {
+      "id": "zy360_json",
+      "name": "360资源 (高清M3U8)",
+      "type": "MACCMS_JSON",
+      "apiUrl": "https://360zy.com/api.php/provide/vod/",
+      "searchable": true,
+      "enabled": true,
+      "group": "真机实测直连"
+    },
+    {
+      "id": "hongniu_json",
+      "name": "红牛资源 (高清直链)",
+      "type": "MACCMS_JSON",
+      "apiUrl": "https://www.hongniuzy2.com/api.php/provide/vod/",
+      "searchable": true,
+      "enabled": true,
+      "group": "真机实测直连"
+    },
+    {
+      "id": "ikun_json",
+      "name": "iKun资源 (高清直链)",
+      "type": "MACCMS_JSON",
+      "apiUrl": "https://ikunzyapi.com/api.php/provide/vod/",
+      "searchable": true,
+      "enabled": true,
+      "group": "真机实测直连"
+    },
+    {
+      "id": "xinlang_json",
+      "name": "新浪资源 (高清直链)",
+      "type": "MACCMS_JSON",
+      "apiUrl": "https://api.xinlangapi.com/xinlangapi.php/provide/vod/",
+      "searchable": true,
+      "enabled": true,
+      "group": "真机实测直连"
+    },
+    {
+      "id": "modu_json",
+      "name": "魔都资源 (动漫影视)",
+      "type": "MACCMS_JSON",
+      "apiUrl": "https://caiji.moduapi.cc/api.php/provide/vod/",
+      "searchable": true,
+      "enabled": true,
+      "group": "真机实测直连"
+    },
+    {
+      "id": "maoyan_json",
+      "name": "猫眼资源 (高清直链)",
+      "type": "MACCMS_JSON",
+      "apiUrl": "https://api.maoyanapi.top/api.php/provide/vod/",
+      "searchable": true,
+      "enabled": true,
+      "group": "真机实测直连"
+    },
+    {
+      "id": "web_bilibili",
+      "name": "哔哩哔哩 (网页嗅探)",
+      "type": "WEB_SNIFFER",
+      "apiUrl": "https://m.bilibili.com/",
+      "searchable": false,
+      "enabled": true,
+      "group": "网页嗅探站点"
+    }
+  ],
+  "subscriptions": [
+    {
+      "id": "sub_cyao_m",
+      "name": "cyao2q/files 主配置 (m.json)",
+      "url": "https://cyao2q.github.io/files/m.json"
+    },
+    {
+      "id": "sub_cyao_xs",
+      "name": "cyao2q/files 扩展配置 (xs.json)",
+      "url": "https://cyao2q.github.io/files/xs.json"
+    }
+  ],
+  "liveSources": [
+    {
+      "id": "live_zbds_v4",
+      "name": "精选 IPv4 央视卫视 (实时校验)",
+      "url": "https://live.zbds.top/tv/iptv4.m3u",
+      "epg": "http://epg.51zmt.top:8000/e.xml"
+    },
+    {
+      "id": "live_guovin_fastly",
+      "name": "全国高清直播 (Fastly 加速)",
+      "url": "https://fastly.jsdelivr.net/gh/Guovin/iptv-api@gd/output/result.m3u"
+    },
+    {
+      "id": "live_suxuang_v4",
+      "name": "4K/高清 IPv4 频道 (Fastly)",
+      "url": "https://fastly.jsdelivr.net/gh/suxuang/myIPTV@main/ipv4.m3u",
+      "epg": "http://epg.51zmt.top:8000/e.xml"
+    }
+  ],
+  "parses": [
+    { "name": "xmflv 解析", "type": 0, "url": "https://jx.xmflv.com/?url=" },
+    { "name": "pouyun 解析", "type": 0, "url": "https://www.pouyun.com/?url=" },
+    { "name": "xymp4 解析", "type": 0, "url": "https://jx.xymp4.cc/?url=" },
+    { "name": "yparse 解析", "type": 0, "url": "https://jx.yparse.com/index.php?url=" },
+    { "name": "8090g 解析", "type": 0, "url": "https://www.8090g.cn/?url=" }
+  ]
+}
