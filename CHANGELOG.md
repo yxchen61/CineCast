@@ -4,6 +4,18 @@
 
 ---
 
+## [v1.2.0] - 2026-11-26
+
+### 新增（Added）
+- **独立小说阅读模块（Android & iOS 双端同步上线）**：
+  - **彻底分离架构**：新增独立底部导航「阅读」（内含 Google Material 3 分段式「书架 | 书城 | 书源」），小说书源、书架与阅读设置均独立存储管理，与视频/直播模块完全解耦。
+  - **Legado 3.0 书源解析与抓取引擎**：Android 集成 Jsoup 1.18.3，实现 `LegadoSourceParser` + `NovelRuleEngine` + `NovelSourceEngine`，支持 JSONPath、Legado 链式 CSS、XPath、正则清洗、GBK/UTF-8 自动解码及分页目录/正文抓取。
+  - **GitHub 开源书源生态内置与订阅**：从 GitHub 实测筛选预置 8 个高可用书源（`XIU2/Yuedu` 酷我小说 API / 速读谷 / 手机小说、`liufuyou/read` 全本同人 / ESJZone / 爱尚 / 英文原著，以及永久直连的 Gutendex 开源中英文名著库），并内置 4 个 GitHub 书源仓库一键订阅导入与粘贴 JSON 导入。
+  - **Google Play Books 风格沉浸式阅读器**：支持 4 套护眼纸感主题（纯净纸白 / 暖黄羊皮 / 护眼豆沙 / 深邃暗夜）、字号/行距/衬线字体自定义、正倒序目录跳转、交互式进度条切章、下一章后台静默预加载以及阅读中一键全书源换源。
+- **文档与安装包**：新增《05_小说阅读模块详细设计文档》《06_小说阅读模块部署与书源导入手册》《示例小说书源配置_Legado模板.json》及 v1.2.0 正式版 Android Release APK 安装包。
+
+---
+
 ## [v1.1.1] - 2026-11-25
 
 ### 新增（Added）

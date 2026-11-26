@@ -9,6 +9,9 @@ import com.cinecast.app.data.engine.TvBoxConfigParser
 import com.cinecast.app.data.engine.VodSourceEngine
 import com.cinecast.app.data.network.NetworkClient
 import com.cinecast.app.data.repository.AppRepository
+import com.cinecast.app.novel.engine.LegadoSourceParser
+import com.cinecast.app.novel.engine.NovelSourceEngine
+import com.cinecast.app.novel.repository.NovelRepository
 
 class CineCastApp : Application() {
 
@@ -21,6 +24,14 @@ class CineCastApp : Application() {
     lateinit var liveParser: LiveParser
         private set
     lateinit var dlnaController: DlnaController
+        private set
+
+    // 独立小说阅读模块依赖（与影视模块完全隔离）
+    lateinit var novelRepository: NovelRepository
+        private set
+    lateinit var novelEngine: NovelSourceEngine
+        private set
+    lateinit var legadoParser: LegadoSourceParser
         private set
 
     override fun onCreate() {
@@ -37,6 +48,10 @@ class CineCastApp : Application() {
         tvBoxParser = TvBoxConfigParser()
         liveParser = LiveParser()
         dlnaController = DlnaController(this)
+
+        novelRepository = NovelRepository(this)
+        novelEngine = NovelSourceEngine()
+        legadoParser = LegadoSourceParser()
     }
 
     companion object {

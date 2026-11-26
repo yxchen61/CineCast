@@ -8,12 +8,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.cinecast.app.novel.ui.NovelHubScreen
+import com.cinecast.app.novel.ui.NovelReaderScreen
+import com.cinecast.app.novel.viewmodel.NovelViewModel
 import com.cinecast.app.ui.components.CastBottomSheet
 import com.cinecast.app.ui.screens.*
 import com.cinecast.app.ui.theme.CineCastTheme
@@ -22,6 +26,7 @@ import com.cinecast.app.ui.viewmodel.MainViewModel
 private enum class MainTab(val label: String, val icon: ImageVector) {
     HOME("发现", Icons.Rounded.Explore),
     LIVE("直播", Icons.Rounded.LiveTv),
+    NOVEL("阅读", Icons.AutoMirrored.Rounded.MenuBook),
     SOURCES("影视源", Icons.Rounded.Dns),
     LIBRARY("我的", Icons.Rounded.Person)
 }
@@ -29,6 +34,7 @@ private enum class MainTab(val label: String, val icon: ImageVector) {
 private sealed class ActiveOverlay {
     data object None : ActiveOverlay()
     data object Player : ActiveOverlay()
+    data object NovelReader : ActiveOverlay()
     data class WebSniffer(val url: String, val title: String) : ActiveOverlay()
 }
 
@@ -43,12 +49,20 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun CineCastRoot(viewModel: MainViewModel = viewModel()) {
+private fun CineCastRoot(
+    viewModel: MainViewModel = viewModel(),
+    novelViewModel: NovelViewModel = viewModel()
+) {
     val settings by viewModel.settings.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
         viewModel.toastMessage.collect { msg ->
+            snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Short)
+        }
+    }
+    LaunchedEffect(Unit) {
+        novelViewModel.toastMessage.collect { msg ->
             snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Short)
         }
     }
@@ -65,6 +79,12 @@ private fun CineCastRoot(viewModel: MainViewModel = viewModel()) {
             is ActiveOverlay.Player -> {
                 PlayerScreen(
                     viewModel = viewModel,
+                    onBack = { overlay = ActiveOverlay.None }
+                )
+            }
+            is ActiveOverlay.NovelReader -> {
+                NovelReaderScreen(
+                    viewModel = novelViewModel,
                     onBack = { overlay = ActiveOverlay.None }
                 )
             }
@@ -124,6 +144,10 @@ private fun CineCastRoot(viewModel: MainViewModel = viewModel()) {
                                 onCastLiveChannel = { title, url ->
                                     globalCastTarget = title to url
                                 }
+                            )
+                            MainTab.NOVEL -> NovelHubScreen(
+                                viewModel = novelViewModel,
+                                onOpenReader = { overlay = ActiveOverlay.NovelReader }
                             )
                             MainTab.SOURCES -> SourcesScreen(
                                 viewModel = viewModel,

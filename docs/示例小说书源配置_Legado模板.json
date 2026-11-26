@@ -1,0 +1,113 @@
+[
+  {
+    "bookSourceName": "酷我小说 (GitHub/XIU2 API)",
+    "bookSourceUrl": "http://appi.kuwo.cn",
+    "bookSourceGroup": "精选直连 (API)",
+    "bookSourceType": 0,
+    "enabled": true,
+    "bookSourceComment": "源自开源仓库 XIU2/Yuedu，纯 JSON API 直连，无广告无验证码。",
+    "header": "{\"User-Agent\": \"Dalvik/2.1.0 (Linux; U; Android 12; Pixel 7)\"}",
+    "searchUrl": "/novels/api/book/search?keyword={{key}}&pi={{page}}&ps=30",
+    "exploreUrl": "热门玄幻::/novels/api/book/search?keyword=斗罗&pi={{page}}&ps=20\n修仙仙侠::/novels/api/book/search?keyword=修仙&pi={{page}}&ps=20\n都市异能::/novels/api/book/search?keyword=都市&pi={{page}}&ps=20\n历史穿越::/novels/api/book/search?keyword=大明&pi={{page}}&ps=20",
+    "ruleSearch": {
+      "bookList": "$.data",
+      "name": "$.title",
+      "author": "$.author_name",
+      "bookUrl": "/novels/api/book/{{$.book_id}}",
+      "coverUrl": "$.cover_url",
+      "intro": "$.intro",
+      "kind": "$.category_name",
+      "wordCount": "$.all_words"
+    },
+    "ruleBookInfo": {
+      "init": "$.data",
+      "name": "$.title",
+      "author": "$.author_name",
+      "coverUrl": "$.cover_url",
+      "intro": "$.intro",
+      "kind": "$.category_name",
+      "lastChapter": "$.new_chapter_name",
+      "tocUrl": "/novels/api/book/{{$.book_id}}/chapters?pi=1&ps=2000"
+    },
+    "ruleToc": {
+      "chapterList": "$.data",
+      "chapterName": "$.chapter_title",
+      "chapterUrl": "/novels/api/book/{{$.book_id}}/chapters/{{$.chapter_id}}"
+    },
+    "ruleContent": {
+      "content": "$.data.content"
+    }
+  },
+  {
+    "bookSourceName": "速读谷 (GitHub/XIU2)",
+    "bookSourceUrl": "https://www.sudugu.co",
+    "bookSourceGroup": "精选直连 (规则源)",
+    "bookSourceType": 0,
+    "enabled": true,
+    "bookSourceComment": "源自开源仓库 XIU2/Yuedu，分类齐全。",
+    "searchUrl": "/modules/article/search.php,{\"method\":\"POST\",\"body\":\"searchkey={{key}}&action=login&searchtype=all&submit=\"}",
+    "exploreUrl": "最近更新::/top/lastupdate/{{page}}.html\n完本排行::/quanben/{{page}}.html\n玄幻小说::/fenlei/1/{{page}}/\n都市小说::/fenlei/3/{{page}}/",
+    "ruleSearch": {
+      "bookList": "class.bookbox||class.item",
+      "name": "tag.h4.0@tag.a.0@text||tag.h3.0@tag.a.0@text||tag.a.0@text",
+      "author": "class.author.0@text##作者：",
+      "bookUrl": "tag.a.0@href",
+      "coverUrl": "tag.img.0@src",
+      "intro": "class.update.0@textNodes||class.des.0@text"
+    },
+    "ruleBookInfo": {
+      "name": "tag.img.0@alt||tag.h1.0@text",
+      "author": "class.itemtxt.0@tag.p.1@tag.a.0@text##作者：",
+      "coverUrl": "tag.img.0@src",
+      "intro": "class.des.0@html",
+      "kind": "class.itemtxt.0@tag.p.0@tag.span@text",
+      "lastChapter": "class.itemtxt.0@tag.li.0@tag.a.0@text"
+    },
+    "ruleToc": {
+      "chapterList": "id.list.0@tag.a",
+      "chapterName": "text",
+      "chapterUrl": "href"
+    },
+    "ruleContent": {
+      "content": "class.con.0@html",
+      "nextContentUrl": "//div[@class='prenext']/span/a[text()='下一页']/@href",
+      "replaceRegex": "##[\\(（]本章完[\\)）]$"
+    }
+  },
+  {
+    "bookSourceName": "全本同人 (GitHub/liufuyou)",
+    "bookSourceUrl": "https://www.qbtr.me",
+    "bookSourceGroup": "精选直连 (规则源)",
+    "bookSourceType": 0,
+    "enabled": true,
+    "bookSourceComment": "源自开源仓库 liufuyou/read，主打完本与同人精品小说。",
+    "searchUrl": "/e/search/index.php,{\"charset\":\"gb2312\",\"method\":\"POST\",\"body\":\"keyboard={{key}}&show=title&classid=0\"}",
+    "exploreUrl": "同人小说::/tongren/<,index_{{page}}.html>\n常规小说::/changgui/<,index_{{page}}.html>\n同人榜单::/hot/<,index_{{page}}.html>",
+    "ruleSearch": {
+      "bookList": ".bk",
+      "name": "h3@text##\\(\\S+",
+      "author": ".booknews@ownText##.*：",
+      "bookUrl": "a.0@href",
+      "coverUrl": "img@src",
+      "intro": "p@text##简介.",
+      "kind": "label@text",
+      "lastChapter": "h3@text##\\S+\\(|\\)"
+    },
+    "ruleBookInfo": {
+      "name": ".infos h1@text##\\(\\S+",
+      "author": ".date span@text##.*：",
+      "coverUrl": ".pic img@src",
+      "intro": ".infos p@html",
+      "kind": ".menNav a.1@text",
+      "lastChapter": ".book_list a.-1@text"
+    },
+    "ruleToc": {
+      "chapterList": ".book_list a",
+      "chapterName": "text",
+      "chapterUrl": "href"
+    },
+    "ruleContent": {
+      "content": ".read_chapterDetail@html"
+    }
+  }
+]

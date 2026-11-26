@@ -104,7 +104,7 @@ struct LibraryView: View {
                 }
 
                 Section {
-                    Text("极光视界 CineCast iOS v1.1.1 · SwiftUI · AVPlayer · AirPlay & DLNA")
+                    Text("极光视界 CineCast iOS v1.2.0 · SwiftUI · AVPlayer · Legado 小说阅读 · AirPlay & DLNA")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }

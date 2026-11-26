@@ -15,7 +15,9 @@ private struct CastTarget: Identifiable {
 @main
 struct CineCastApp: App {
     @StateObject private var store = AppStore()
+    @StateObject private var novelStore = NovelStore()
     @State private var activePlayer: ActivePlayerSession? = nil
+    @State private var showNovelReader: Bool = false
     @State private var webTarget: WebSnifferTarget? = nil
     @State private var castTarget: CastTarget? = nil
 
@@ -46,6 +48,12 @@ struct CineCastApp: App {
                     )
                     .tabItem { Label("直播", systemImage: "play.tv.fill") }
 
+                    NovelHubView(
+                        onOpenReader: { showNovelReader = true }
+                    )
+                    .environmentObject(novelStore)
+                    .tabItem { Label("阅读", systemImage: "book.fill") }
+
                     SourcesView(
                         onOpenWebSniffer: { url, title in
                             webTarget = WebSnifferTarget(url: url, title: title)
@@ -64,7 +72,7 @@ struct CineCastApp: App {
                 .environmentObject(store)
                 .preferredColorScheme(store.settings.themeMode.colorScheme)
 
-                if let msg = store.toastMessage {
+                if let msg = store.toastMessage ?? novelStore.toastMessage {
                     Text(msg)
                         .font(.caption.weight(.medium))
                         .foregroundColor(.white)
@@ -74,12 +82,16 @@ struct CineCastApp: App {
                         .clipShape(Capsule())
                         .padding(.bottom, 64)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .animation(.easeInOut, value: store.toastMessage)
+                        .animation(.easeInOut, value: msg)
                 }
             }
             .fullScreenCover(item: $activePlayer) { session in
                 PlayerView(session: session)
                     .environmentObject(store)
+            }
+            .fullScreenCover(isPresented: $showNovelReader) {
+                NovelReaderView()
+                    .environmentObject(novelStore)
             }
             .sheet(item: $webTarget) { target in
                 WebSnifferView(

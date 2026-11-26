@@ -14,8 +14,8 @@ android {
         applicationId = "com.cinecast.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.1.1"
+        versionCode = 10
+        versionName = "1.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -88,8 +88,9 @@ dependencies {
     implementation("androidx.media3:media3-ui:$media3Version")
     implementation("androidx.media3:media3-common:$media3Version")
 
-    // Networking, JSON, Image loading, Coroutines
+    // Networking, JSON, HTML Parsing (Legado Novel Engine), Image loading, Coroutines
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.jsoup:jsoup:1.18.3")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

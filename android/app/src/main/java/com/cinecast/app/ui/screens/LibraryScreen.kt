@@ -259,7 +259,7 @@ fun LibraryScreen(
 
             item {
                 Text(
-                    "极光视界 CineCast v1.0.0 · Material Design 3 · Media3 ExoPlayer · Native DLNA",
+                    "极光视界 CineCast v1.2.0 · Material Design 3 · Media3 ExoPlayer · Legado 小说阅读 · Native DLNA",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
