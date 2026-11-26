@@ -207,13 +207,16 @@ class MainViewModel : ViewModel() {
         val nextPage = if (reset) 1 else cur.page + 1
         if (!reset && (cur.isLoadingMore || cur.page >= cur.pageCount)) return
 
+        // Prioritize sources with live-verified playable #EXTM3U streams for English cartoons
         val preferredIds = listOf(
-            "dytt_en_cartoon",
-            "guangsu_en_cartoon",
-            "subo_en_cartoon",
+            "hongniu_json",
+            "zy360_json",
             "jszy_json",
-            "huohu_en_cartoon",
-            "zy1080_en_cartoon"
+            "huya_json",
+            "rycj_json",
+            "ikun_json",
+            "subo_en_cartoon",
+            "guangsu_en_cartoon"
         )
         val allApi = getActiveApiSources()
         val orderedTargets = (preferredIds.mapNotNull { id -> allApi.firstOrNull { it.id == id } } + allApi)
@@ -392,6 +395,9 @@ class MainViewModel : ViewModel() {
         _searchState.value = SearchUiState(searchAllSources = _searchState.value.searchAllSources)
     }
 
+    private val triedVodFailoverSources = mutableSetOf<String>()
+    private var vodFailoverJob: Job? = null
+
     fun openVodDetail(sourceId: String, vodId: String) {
         val source = repository.getSourceById(sourceId)
             ?: getActiveApiSources().firstOrNull()
@@ -399,6 +405,9 @@ class MainViewModel : ViewModel() {
             _playerState.value = PlayerUiState(error = "找不到对应视频源")
             return
         }
+        vodFailoverJob?.cancel()
+        triedVodFailoverSources.clear()
+        triedVodFailoverSources.add(source.id)
         val historyItem = repository.getHistoryItem(source.id, vodId)
         viewModelScope.launch {
             _playerState.value = PlayerUiState(isLoading = true)
@@ -420,6 +429,47 @@ class MainViewModel : ViewModel() {
                     isLoading = false,
                     error = "获取影片详情失败：${e.message}"
                 )
+            }
+        }
+    }
+
+    /**
+     * 影片播放报错时自动跨视频源搜索同名可播线路并无缝切源（解决阳阳专区等单个源 403/失效问题）
+     */
+    fun autoSwitchSameVodToNextSource(failedDetail: VodDetail, currentEpisodeIndex: Int) {
+        val candidates = getActiveApiSources().filter {
+            it.searchable && it.id !in triedVodFailoverSources
+        }.take(4)
+        if (candidates.isEmpty()) return
+        vodFailoverJob?.cancel()
+        vodFailoverJob = viewModelScope.launch {
+            val cleanName = failedDetail.name.replace(Regex("""[（(【\[].*?[）)】\]]"""), "").trim().ifBlank { failedDetail.name }
+            for (altSrc in candidates) {
+                triedVodFailoverSources.add(altSrc.id)
+                val found = withTimeoutOrNull(6500L) {
+                    runCatching { vodEngine.search(altSrc, cleanName, 1) }.getOrDefault(emptyList())
+                }.orEmpty()
+                val match = found.firstOrNull {
+                    it.name.equals(failedDetail.name, true) ||
+                        it.name.contains(cleanName, true) ||
+                        cleanName.contains(it.name, true)
+                } ?: continue
+                val altDetail = withTimeoutOrNull(6500L) {
+                    runCatching { vodEngine.fetchDetail(altSrc, match.id) }.getOrNull()
+                }
+                if (altDetail != null && altDetail.playSources.isNotEmpty()) {
+                    val epIdx = currentEpisodeIndex.coerceIn(0, (altDetail.playSources[0].episodes.size - 1).coerceAtLeast(0))
+                    _playerState.value = PlayerUiState(
+                        detail = altDetail,
+                        isLoading = false,
+                        playSourceIndex = 0,
+                        episodeIndex = epIdx,
+                        directHeaders = altSrc.headers,
+                        resumePositionMs = 0L
+                    )
+                    _toastMessage.tryEmit("原线路不可播，已自动切换至「${altSrc.name.substringBefore(" ")}」播放")
+                    return@launch
+                }
             }
         }
     }

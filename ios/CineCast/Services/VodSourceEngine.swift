@@ -277,14 +277,17 @@ final class VodSourceEngine {
                 result.append(VodPlaySource(name: name, episodes: eps))
             }
         }
-        // Prefer direct m3u8 / mp4 lines first
-        return result.sorted { a, b in
+        // Prefer direct m3u8 / mp4 lines and exclude web share pages when direct streams exist
+        let directOnly = result.filter { scoreLine($0) >= 2 }
+        let chosen = directOnly.isEmpty ? result : directOnly
+        return chosen.sorted { a, b in
             scoreLine(a) > scoreLine(b)
         }
     }
 
     private static func scoreLine(_ ps: VodPlaySource) -> Int {
         let first = ps.episodes.first?.url.lowercased() ?? ""
+        if first.contains("/share/") || first.hasSuffix(".html") || first.hasSuffix(".htm") { return 0 }
         if ps.name.lowercased().contains("m3u8") || first.contains(".m3u8") { return 3 }
         if first.contains(".mp4") { return 2 }
         return 1

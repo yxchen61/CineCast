@@ -166,7 +166,14 @@ final class MusicStore: ObservableObject {
         try? AVAudioSession.sharedInstance().setActive(true)
         cleanupObservers()
 
-        let item = AVPlayerItem(url: url)
+        let host = url.host?.lowercased() ?? ""
+        let item: AVPlayerItem
+        if host.contains("bilivideo") || host.contains("hdslb") || host.contains("akamaized") || host.contains("bilibili") {
+            let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": MusicSourceEngine.bilibiliHeaders])
+            item = AVPlayerItem(asset: asset)
+        } else {
+            item = AVPlayerItem(url: url)
+        }
         let p = AVPlayer(playerItem: item)
         player = p
 
@@ -187,7 +194,14 @@ final class MusicStore: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 if observedItem.status == .readyToPlay {
-                    self.consecutiveAutoSkipCount = 0
+                    let durSec = observedItem.duration.seconds
+                    if let cur = self.currentTrack, !cur.isLiveRadio, durSec.isFinite, durSec > 1, durSec <= 65 {
+                        self.player?.pause()
+                        self.showToast("检测到 \(Int(durSec))秒 试听片段，自动切换完整版音源...")
+                        await self.autoSwitchSameSongOrAdvance(index: self.currentIndex, failedTrack: cur)
+                    } else {
+                        self.consecutiveAutoSkipCount = 0
+                    }
                 } else if observedItem.status == .failed, let cur = self.currentTrack {
                     await self.autoSwitchSameSongOrAdvance(index: self.currentIndex, failedTrack: cur)
                 }
@@ -313,7 +327,25 @@ final class MusicStore: ObservableObject {
     }
 
     private func loadAll() {
-        sources = read("music_sources.json") ?? Self.defaultSources()
+        let defaults = Self.defaultSources()
+        if let saved: [MusicSource] = read("music_sources.json") {
+            let isV160 = !saved.contains(where: { $0.id == "fast_bilibili_music" })
+            let existingIds = Set(saved.map(\.id))
+            let missing = defaults.filter { !existingIds.contains($0.id) }
+            if isV160 || !missing.isEmpty {
+                let updated = saved.map { s -> MusicSource in
+                    if isV160 && s.id == "fast_vkeys_qq" { var c = s; c.enabled = false; return c }
+                    return s
+                }
+                sources = missing + updated
+                persist(sources, file: "music_sources.json")
+            } else {
+                sources = saved
+            }
+        } else {
+            sources = defaults
+            persist(sources, file: "music_sources.json")
+        }
         activeSourceId = enabledSources.first?.id ?? sources.first?.id ?? ""
         subscriptions = read("music_subs.json") ?? Self.defaultSubs()
         favorites = read("music_favorites.json") ?? []
@@ -331,9 +363,10 @@ final class MusicStore: ObservableObject {
 
     static func defaultSources() -> [MusicSource] {
         [
-            MusicSource(id: "fast_vkeys_qq", name: "QQ音乐极速直连 (默认推荐)", baseUrl: "https://api.vkeys.cn/v2/music/tencent", sourceType: .VKEYS_API, platform: "tencent", group: "极速直连 (国内首选)", charts: [MusicChartCategory(title: "热歌精选", idOrQuery: "热门"), MusicChartCategory(title: "华语金曲", idOrQuery: "周杰伦"), MusicChartCategory(title: "抖音爆款", idOrQuery: "抖音"), MusicChartCategory(title: "治愈轻音", idOrQuery: "轻音乐")]),
-            MusicSource(id: "fast_kuwo_direct", name: "酷我官方高速榜 (直连秒播)", baseUrl: "http://kbangserver.kuwo.cn", sourceType: .KUWO_DIRECT, platform: "kuwo", group: "极速直连 (国内首选)", charts: [MusicChartCategory(title: "酷我热歌榜", idOrQuery: "16"), MusicChartCategory(title: "酷我飙升榜", idOrQuery: "93"), MusicChartCategory(title: "酷我新歌榜", idOrQuery: "17")]),
-            MusicSource(id: "git_gdstudio_netease", name: "GD音乐台 · 曲库搜歌 (GitHub/GDStudio)", baseUrl: "https://music-api.gdstudio.xyz/api.php", sourceType: .GDSTUDIO_API, platform: "netease", group: "开源聚合曲库 (备用)", charts: [MusicChartCategory(title: "华语热歌", idOrQuery: "热门"), MusicChartCategory(title: "经典金曲", idOrQuery: "周杰伦")]),
+            MusicSource(id: "fast_bilibili_music", name: "B站全曲无损直连 (默认推荐·完整版)", baseUrl: "https://api.bilibili.com", sourceType: .BILIBILI_MUSIC, platform: "bilibili", group: "完整版极速直连 (国内首选)", charts: [MusicChartCategory(title: "热歌完整版", idOrQuery: "热门华语歌曲 完整版 无损"), MusicChartCategory(title: "周杰伦全曲", idOrQuery: "周杰伦 无损音质 完整版"), MusicChartCategory(title: "陈奕迅金曲", idOrQuery: "陈奕迅 完整版 无损"), MusicChartCategory(title: "抖音爆款", idOrQuery: "抖音热歌 完整版 原唱")]),
+            MusicSource(id: "fast_qijieya_meting", name: "奇杰雅云音乐 320K (完整版榜单)", baseUrl: "https://api.qijieya.cn/meting/", sourceType: .METING_API, platform: "netease", group: "完整版极速直连 (国内首选)", charts: [MusicChartCategory(title: "热歌榜", idOrQuery: "3778678"), MusicChartCategory(title: "飙升榜", idOrQuery: "19723756"), MusicChartCategory(title: "新歌榜", idOrQuery: "3779629")]),
+            MusicSource(id: "fast_kuwo_direct", name: "酷我官方高速榜 (直连秒播)", baseUrl: "http://kbangserver.kuwo.cn", sourceType: .KUWO_DIRECT, platform: "kuwo", group: "完整版极速直连 (国内首选)", charts: [MusicChartCategory(title: "酷我热歌榜", idOrQuery: "16"), MusicChartCategory(title: "酷我飙升榜", idOrQuery: "93"), MusicChartCategory(title: "酷我新歌榜", idOrQuery: "17")]),
+            MusicSource(id: "git_gdstudio_netease", name: "GD音乐台 · 320K 搜歌 (GitHub/GDStudio)", baseUrl: "https://music-api.gdstudio.xyz/api.php", sourceType: .GDSTUDIO_API, platform: "netease", group: "开源聚合曲库 (备用)", charts: [MusicChartCategory(title: "华语热歌", idOrQuery: "热门"), MusicChartCategory(title: "经典金曲", idOrQuery: "周杰伦")]),
             MusicSource(id: "open_audius_global", name: "Audius 全球独立音乐 (开源曲库)", baseUrl: "https://discoveryprovider.audius.co/v1", sourceType: .AUDIUS_API, platform: "global", group: "欧美/电子/独立音乐", charts: [MusicChartCategory(title: "全球热榜", idOrQuery: "trending"), MusicChartCategory(title: "Lo-Fi", idOrQuery: "Lo-Fi")]),
             MusicSource(id: "open_radiobrowser_fm", name: "Radio-Browser 在线音乐电台 (开源 FM)", baseUrl: "https://de1.api.radio-browser.info/json", sourceType: .RADIO_BROWSER, platform: "cn", group: "24h 在线电台", charts: [MusicChartCategory(title: "华语音乐台", idOrQuery: "cn"), MusicChartCategory(title: "全球人气电台", idOrQuery: "top")])
         ]

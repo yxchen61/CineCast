@@ -108,6 +108,9 @@ class MusicViewModel : ViewModel() {
         audioController.setOnTrackReady {
             consecutiveAutoSkipCount = 0
         }
+        audioController.setOnShortPreviewDetected { durMs ->
+            handleShortPreviewDetected(durMs)
+        }
         viewModelScope.launch {
             while (isActive) {
                 audioController.pollProgress()
@@ -226,13 +229,14 @@ class MusicViewModel : ViewModel() {
             // Prioritize GDStudio & Audius for full catalog search
             val prioritized = all.sortedBy {
                 when (it.sourceType) {
-                    MusicSourceType.VKEYS_API -> 0
-                    MusicSourceType.KUWO_DIRECT -> 1
-                    MusicSourceType.GDSTUDIO_API -> 2
-                    MusicSourceType.AUDIUS_API -> 3
-                    MusicSourceType.METING_API -> 4
-                    MusicSourceType.RADIO_BROWSER -> 5
-                    MusicSourceType.M3U_AUDIO -> 6
+                    MusicSourceType.BILIBILI_MUSIC -> 0
+                    MusicSourceType.METING_API -> 1
+                    MusicSourceType.KUWO_DIRECT -> 2
+                    MusicSourceType.GDSTUDIO_API -> 3
+                    MusicSourceType.AUDIUS_API -> 4
+                    MusicSourceType.VKEYS_API -> 5
+                    MusicSourceType.RADIO_BROWSER -> 6
+                    MusicSourceType.M3U_AUDIO -> 7
                 }
             }
             (listOfNotNull(active?.takeIf { it.searchable }) + prioritized).distinctBy { it.id }.take(8)
@@ -297,13 +301,14 @@ class MusicViewModel : ViewModel() {
         if (name.isBlank()) return
         val targets = getEnabledSources().filter { it.searchable }.sortedBy {
             when (it.sourceType) {
-                MusicSourceType.VKEYS_API -> 0
-                MusicSourceType.KUWO_DIRECT -> 1
-                MusicSourceType.GDSTUDIO_API -> 2
-                MusicSourceType.AUDIUS_API -> 3
-                MusicSourceType.METING_API -> 4
-                MusicSourceType.RADIO_BROWSER -> 5
-                MusicSourceType.M3U_AUDIO -> 6
+                MusicSourceType.BILIBILI_MUSIC -> 0
+                MusicSourceType.METING_API -> 1
+                MusicSourceType.KUWO_DIRECT -> 2
+                MusicSourceType.GDSTUDIO_API -> 3
+                MusicSourceType.AUDIUS_API -> 4
+                MusicSourceType.VKEYS_API -> 5
+                MusicSourceType.RADIO_BROWSER -> 6
+                MusicSourceType.M3U_AUDIO -> 7
             }
         }.take(6)
 
@@ -480,7 +485,7 @@ class MusicViewModel : ViewModel() {
             resolveError = null
         )
         app.pingshuAudioController.pause()
-        audioController.playUrl(resolved.streamUrl)
+        audioController.playUrl(resolved.streamUrl, resolved.isLiveRadio)
         viewModelScope.launch { musicRepository.recordRecentPlay(resolved) }
 
         // Step 2: Fetch cover & synced LRC lyrics asynchronously in background (zero audio delay!)
@@ -496,6 +501,20 @@ class MusicViewModel : ViewModel() {
                     lyrics = if (lrcLines.isNotEmpty()) lrcLines else _playerState.value.lyrics
                 )
             }
+        }
+    }
+
+    private fun handleShortPreviewDetected(durationMs: Long) {
+        val cur = _playerState.value
+        val track = cur.currentTrack ?: return
+        val idx = cur.currentIndex
+        if (idx !in cur.queue.indices || track.isLiveRadio) return
+        val sec = (durationMs / 1000L).coerceAtLeast(1L)
+        _toastMessage.tryEmit("检测到 ${sec}秒 VIP 试听片段，正自动切换完整版音源播放《${track.title}》...")
+        playJob?.cancel()
+        extrasJob?.cancel()
+        playJob = viewModelScope.launch {
+            autoSwitchSameSongOrAdvance(idx, track, "仅${sec}秒试听片段")
         }
     }
 
@@ -534,12 +553,13 @@ class MusicViewModel : ViewModel() {
             }
             .sortedBy {
                 when (it.sourceType) {
-                    MusicSourceType.VKEYS_API -> 0
-                    MusicSourceType.KUWO_DIRECT -> 1
-                    MusicSourceType.GDSTUDIO_API -> 2
-                    MusicSourceType.METING_API -> 3
+                    MusicSourceType.BILIBILI_MUSIC -> 0
+                    MusicSourceType.METING_API -> 1
+                    MusicSourceType.KUWO_DIRECT -> 2
+                    MusicSourceType.GDSTUDIO_API -> 3
                     MusicSourceType.AUDIUS_API -> 4
-                    else -> 5
+                    MusicSourceType.VKEYS_API -> 5
+                    else -> 6
                 }
             }
 
@@ -798,6 +818,10 @@ class MusicViewModel : ViewModel() {
         viewModelScope.launch {
             val existing = existingId?.let { musicRepository.getSourceById(it) }
             val defaultCharts = existing?.charts?.takeIf { it.isNotEmpty() } ?: when (type) {
+                MusicSourceType.BILIBILI_MUSIC -> listOf(
+                    MusicChartCategory("热歌完整版", "热门华语歌曲 完整版 无损"),
+                    MusicChartCategory("周杰伦全曲", "周杰伦 无损音质 完整版")
+                )
                 MusicSourceType.VKEYS_API -> listOf(
                     MusicChartCategory("热歌精选", "热门"),
                     MusicChartCategory("华语金曲", "周杰伦")

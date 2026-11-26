@@ -212,6 +212,18 @@ class MusicSourceParser {
                     comment = "映射自 MusicFree 插件：$pluginUrl",
                     subscriptionUrl = subUrl
                 )
+            lower.contains("bilibili") || lower.contains("b站") || lower.contains("哔哩") ->
+                MusicSource(
+                    id = "mf_${shortHash(pluginName + pluginUrl)}",
+                    name = "$pluginName (MusicFree$suffix)",
+                    baseUrl = "https://api.bilibili.com",
+                    sourceType = MusicSourceType.BILIBILI_MUSIC,
+                    platform = "bilibili",
+                    group = "GitHub MusicFree 订阅",
+                    charts = defaultChartsFor(MusicSourceType.BILIBILI_MUSIC, ""),
+                    comment = "映射自 MusicFree 插件：$pluginUrl",
+                    subscriptionUrl = subUrl
+                )
             lower.contains("audiomack") || lower.contains("audius") || lower.contains("欧美") || lower.contains("独立") ->
                 MusicSource(
                     id = "mf_${shortHash(pluginName + pluginUrl)}",
@@ -229,6 +241,12 @@ class MusicSourceParser {
     }
 
     private fun defaultChartsFor(type: MusicSourceType, baseUrl: String): List<MusicChartCategory> = when (type) {
+        MusicSourceType.BILIBILI_MUSIC -> listOf(
+            MusicChartCategory("热歌完整版", "热门华语歌曲 完整版 无损"),
+            MusicChartCategory("周杰伦全曲", "周杰伦 无损音质 完整版"),
+            MusicChartCategory("陈奕迅金曲", "陈奕迅 完整版 无损"),
+            MusicChartCategory("抖音爆款", "抖音热歌 完整版 原唱")
+        )
         MusicSourceType.VKEYS_API -> listOf(
             MusicChartCategory("热歌精选", "热门"),
             MusicChartCategory("华语金曲", "周杰伦"),

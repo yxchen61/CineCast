@@ -274,4 +274,46 @@ class NovelEngineUnitTest {
         assertEquals("ximalaya_album://2677356", parsed[0].bookUrl)
         assertEquals("单田芳评书", parsed[0].author)
     }
+
+    @Test
+    fun test5000yanMainlandClassicsParsingAndCategories() {
+        val engine = NovelSourceEngine()
+        val src = com.cinecast.app.novel.model.NovelSource(
+            id = "open_5000yan_classics",
+            name = "五千言 · 中华古典名著馆",
+            baseUrl = "https://www.5000yan.com",
+            sourceType = NovelSourceType.CLASSICS_5000YAN
+        )
+        val cats = engine.getExploreCategories(src)
+        assertEquals(4, cats.size)
+        assertEquals("四大名著", cats[0].title)
+
+        val tocHtml = """
+            <html><body>
+              <nav><a href="https://www.5000yan.com/">首页</a></nav>
+              <ul class="list">
+                <li><a href="https://sanguo.5000yan.com/1191.html">第一回 宴桃园豪杰三结义 斩黄巾英雄首立功</a></li>
+                <li><a href="/1192.html">第二回 张翼德怒鞭督邮 何国舅谋诛宦竖</a></li>
+                <li><a href="https://sanguo.5000yan.com/1191.html">第一回 重复链接应去重</a></li>
+              </ul>
+            </body></html>
+        """.trimIndent()
+        val chapters = NovelSourceEngine.parse5000yanToc(tocHtml, "https://sanguo.5000yan.com/")
+        assertEquals(2, chapters.size)
+        assertEquals("https://sanguo.5000yan.com/1191.html", chapters[0].url)
+        assertEquals("https://sanguo.5000yan.com/1192.html", chapters[1].url)
+        assertTrue(chapters[0].title.contains("宴桃园豪杰三结义"))
+
+        val chapterHtml = """
+            <html><body>
+              <article class="reading-content">
+                <p>滚滚长江东逝水，浪花淘尽英雄。</p>
+                <p>话说天下大势，分久必合，合久必分。</p>
+              </article>
+            </body></html>
+        """.trimIndent()
+        val text = NovelSourceEngine.parse5000yanChapterHtml(chapterHtml)
+        assertTrue(text.contains("滚滚长江东逝水"))
+        assertTrue(text.contains("话说天下大势"))
+    }
 }

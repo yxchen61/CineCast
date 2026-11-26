@@ -34,8 +34,11 @@ class MusicAudioController(context: Context) {
     private var onTrackEndedCallback: (() -> Unit)? = null
     private var onTrackErrorCallback: ((String) -> Unit)? = null
     private var onTrackReadyCallback: (() -> Unit)? = null
+    private var onShortPreviewDetectedCallback: ((Long) -> Unit)? = null
     private var hasSignaledEndedForCurrentItem: Boolean = false
     private var hasSignaledErrorForCurrentItem: Boolean = false
+    private var hasSignaledShortPreviewForCurrentItem: Boolean = false
+    private var currentIsLiveRadio: Boolean = false
 
     private val _state = MutableStateFlow(AudioPlaybackState())
     val state: StateFlow<AudioPlaybackState> = _state.asStateFlow()
@@ -43,7 +46,24 @@ class MusicAudioController(context: Context) {
     @OptIn(UnstableApi::class)
     private fun ensurePlayer(): ExoPlayer {
         exoPlayer?.let { return it }
-        val dataSourceFactory = OkHttpDataSource.Factory(NetworkClient.client)
+        val musicHttpClient = NetworkClient.client.newBuilder()
+            .addInterceptor { chain ->
+                val req = chain.request()
+                val host = req.url.host.lowercase()
+                val builder = req.newBuilder()
+                if (host.contains("bilivideo") || host.contains("hdslb") ||
+                    host.contains("akamaized") || host.contains("bilibili")
+                ) {
+                    builder.header("Referer", "https://www.bilibili.com/")
+                    builder.header(
+                        "User-Agent",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+                    )
+                }
+                chain.proceed(builder.build())
+            }
+            .build()
+        val dataSourceFactory = OkHttpDataSource.Factory(musicHttpClient)
             .setUserAgent(NetworkClient.DEFAULT_UA)
         val audioAttrs = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
@@ -71,7 +91,15 @@ class MusicAudioController(context: Context) {
                             error = if (playbackState == Player.STATE_READY) null else _state.value.error
                         )
                         if (playbackState == Player.STATE_READY) {
-                            onTrackReadyCallback?.invoke()
+                            if (!currentIsLiveRadio && !hasSignaledShortPreviewForCurrentItem &&
+                                dur in 1_000L..SHORT_PREVIEW_THRESHOLD_MS
+                            ) {
+                                hasSignaledShortPreviewForCurrentItem = true
+                                player.pause()
+                                onShortPreviewDetectedCallback?.invoke(dur)
+                            } else {
+                                onTrackReadyCallback?.invoke()
+                            }
                         }
                         if (playbackState == Player.STATE_ENDED && !hasSignaledEndedForCurrentItem) {
                             hasSignaledEndedForCurrentItem = true
@@ -107,10 +135,16 @@ class MusicAudioController(context: Context) {
         onTrackReadyCallback = callback
     }
 
-    fun playUrl(url: String) {
+    fun setOnShortPreviewDetected(callback: (Long) -> Unit) {
+        onShortPreviewDetectedCallback = callback
+    }
+
+    fun playUrl(url: String, isLiveRadio: Boolean = false) {
         val player = ensurePlayer()
         hasSignaledEndedForCurrentItem = false
         hasSignaledErrorForCurrentItem = false
+        hasSignaledShortPreviewForCurrentItem = false
+        currentIsLiveRadio = isLiveRadio
         _state.value = AudioPlaybackState(isBuffering = true)
         player.setMediaItem(MediaItem.fromUri(url))
         player.prepare()
@@ -143,6 +177,16 @@ class MusicAudioController(context: Context) {
                 durationMs = dur
             )
         }
+        // Detect short VIP trial previews even when duration arrives slightly after STATE_READY
+        if (!currentIsLiveRadio && !hasSignaledShortPreviewForCurrentItem &&
+            player.playbackState == Player.STATE_READY &&
+            dur in 1_000L..SHORT_PREVIEW_THRESHOLD_MS
+        ) {
+            hasSignaledShortPreviewForCurrentItem = true
+            player.pause()
+            onShortPreviewDetectedCallback?.invoke(dur)
+            return
+        }
         // Fallback safety net: ensure track completion is never missed even if a state callback was dropped
         if (player.playbackState == Player.STATE_ENDED && !hasSignaledEndedForCurrentItem) {
             hasSignaledEndedForCurrentItem = true
@@ -153,5 +197,10 @@ class MusicAudioController(context: Context) {
     fun release() {
         exoPlayer?.release()
         exoPlayer = null
+    }
+
+    companion object {
+        /** 凡时长 <= 65 秒的非电台音频均视为 VIP 试听片段，触发自动切换完整版音源 */
+        const val SHORT_PREVIEW_THRESHOLD_MS = 65_000L
     }
 }

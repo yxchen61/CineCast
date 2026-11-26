@@ -29,6 +29,14 @@ class NovelSourceEngine {
     private val gutenbergChaptersCache = ConcurrentHashMap<String, List<NovelChapter>>()
 
     fun getExploreCategories(source: NovelSource): List<NovelExploreCategory> {
+        if (source.sourceType == NovelSourceType.CLASSICS_5000YAN) {
+            return listOf(
+                NovelExploreCategory("四大名著", "yan5000_cat://sida"),
+                NovelExploreCategory("古典小说名著", "yan5000_cat://classical"),
+                NovelExploreCategory("史学与神话", "yan5000_cat://history"),
+                NovelExploreCategory("国学经典与诗词", "yan5000_cat://guoxue")
+            )
+        }
         if (source.sourceType == NovelSourceType.XIMALAYA_PINGSHU) {
             return listOf(
                 NovelExploreCategory("热门免费评书", "xm_cat://hot"),
@@ -74,6 +82,10 @@ class NovelSourceEngine {
         categoryUrl: String,
         page: Int = 1
     ): List<NovelBook> = withContext(Dispatchers.IO) {
+        if (source.sourceType == NovelSourceType.CLASSICS_5000YAN) {
+            if (page > 1) return@withContext emptyList()
+            return@withContext getCurated5000yanBooks(source, categoryUrl)
+        }
         if (source.sourceType == NovelSourceType.XIMALAYA_PINGSHU) {
             return@withContext fetchXimalayaPingshuExplore(source, categoryUrl, page)
         }
@@ -103,6 +115,9 @@ class NovelSourceEngine {
         val q = keyword.trim()
         if (q.isBlank()) return@withContext emptyList()
 
+        if (source.sourceType == NovelSourceType.CLASSICS_5000YAN) {
+            return@withContext search5000yanBooks(source, q)
+        }
         if (source.sourceType == NovelSourceType.XIMALAYA_PINGSHU) {
             return@withContext searchXimalayaPingshu(source, q)
         }
@@ -129,6 +144,13 @@ class NovelSourceEngine {
         source: NovelSource,
         book: NovelBook
     ): Pair<NovelBook, List<NovelChapter>> = withContext(Dispatchers.IO) {
+        if (source.sourceType == NovelSourceType.CLASSICS_5000YAN || book.bookUrl.contains(".5000yan.com")) {
+            val html = executeRequest(book.bookUrl, source)
+            val chapters = parse5000yanToc(html, book.bookUrl)
+            return@withContext book.copy(
+                latestChapter = chapters.lastOrNull()?.title?.ifBlank { "全本典藏" } ?: "全本典藏"
+            ) to chapters
+        }
         if (source.sourceType == NovelSourceType.XIMALAYA_PINGSHU || book.bookUrl.startsWith("ximalaya_album://")) {
             val episodes = fetchXimalayaPingshuEpisodes(source, book)
             return@withContext book.copy(latestChapter = "共 ${episodes.size} 回") to episodes
@@ -177,6 +199,12 @@ class NovelSourceEngine {
         if (!chapter.inlineContent.isNullOrBlank()) {
             return@withContext chapter.inlineContent
         }
+        if (source.sourceType == NovelSourceType.CLASSICS_5000YAN || chapter.url.contains(".5000yan.com")) {
+            val html = executeRequest(chapter.url, source)
+            val text = parse5000yanChapterHtml(html)
+            if (text.isBlank()) throw IllegalStateException("未能提取该回正文，请刷新重试")
+            return@withContext formatCleanParagraphs(text)
+        }
         if (source.sourceType == NovelSourceType.WIKISOURCE_API || chapter.url.startsWith("wikisource://")) {
             return@withContext fetchWikisourceChapterText(source, chapter.url.removePrefix("wikisource://"))
         }
@@ -206,6 +234,8 @@ class NovelSourceEngine {
         val start = System.currentTimeMillis()
         try {
             val probeUrl = when {
+                source.sourceType == NovelSourceType.CLASSICS_5000YAN ->
+                    "https://sanguo.5000yan.com/"
                 source.sourceType == NovelSourceType.XIMALAYA_PINGSHU ->
                     "https://www.ximalaya.com/revision/category/v2/albums?pageNum=1&pageSize=3&sort=1&categoryId=12"
                 source.sourceType == NovelSourceType.KUWO_PINGSHU ->
@@ -1275,5 +1305,116 @@ class NovelSourceEngine {
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .joinToString("\n\n")
+    }
+
+    // ==================== 五千言中华古典名著馆 (5000yan.com 国内 36ms 直连) ====================
+
+    private data class Yan5000BookEntry(
+        val title: String,
+        val subdomain: String,
+        val author: String,
+        val kind: String,
+        val chaptersHint: String,
+        val intro: String
+    )
+
+    private val yan5000Catalog: Map<String, List<Yan5000BookEntry>> = mapOf(
+        "yan5000_cat://sida" to listOf(
+            Yan5000BookEntry("三国演义", "sanguo", "罗贯中", "四大名著", "全 120 回", "东汉末年群雄逐鹿，魏蜀吴三国鼎立波澜壮阔的历史演义（国内直连·简体全本）。"),
+            Yan5000BookEntry("红楼梦", "hongloumeng", "曹雪芹", "四大名著", "全 120 回", "中国古典长篇小说巅峰之作，以贾宝玉、林黛玉、薛宝钗情感与贾府兴衰映照世情百态。"),
+            Yan5000BookEntry("西游记", "xiyouji", "吴承恩", "四大名著", "全 100 回", "唐僧师徒四人历经九九八十一难、降妖伏魔西天取经的神魔古典名著。"),
+            Yan5000BookEntry("水浒传", "shuihu", "施耐庵", "四大名著", "全 120 回", "北宋末年梁山泊一百零八位好汉聚义反抗贪官污吏的英雄传奇。")
+        ),
+        "yan5000_cat://classical" to listOf(
+            Yan5000BookEntry("封神演义", "fengshen", "许仲琳", "古典神魔", "全 100 回", "商周更替背景下姜子牙辅佐周武王伐纣、诸仙斗法封神的瑰丽神魔史诗。"),
+            Yan5000BookEntry("聊斋志异", "liaozhai", "蒲松龄", "文言志怪", "全 494 篇", "写鬼写妖高人一等、刺贪刺虐入骨三分的中国文言短篇小说巅峰巨著。"),
+            Yan5000BookEntry("儒林外史", "rulin", "吴敬梓", "古典讽刺", "全 56 回", "深刻描摹科举制度下古代知识分子命运与世态人情的讽刺小说典范。"),
+            Yan5000BookEntry("隋唐演义", "suitang", "褚人获", "历史演义", "全 100 回", "讲述瓦岗寨群雄并起、秦琼程咬金等好汉辅佐大唐开国的英雄历史演义。"),
+            Yan5000BookEntry("镜花缘", "jinghuayuan", "李汝珍", "奇幻古典", "全 100 回", "融合海外奇国游记、才女科举与神魔幻想的清代奇书。"),
+            Yan5000BookEntry("官场现形记", "guanchang", "李伯元", "晚清谴责", "全 60 回", "晚清四大谴责小说之首，辛辣揭示旧官场众生相。")
+        ),
+        "yan5000_cat://history" to listOf(
+            Yan5000BookEntry("战国策", "zhanguoce", "刘向 编订", "史学谋略", "全 147 篇", "先秦纵横家游说辞令与政治外交智慧的巅峰典籍。"),
+            Yan5000BookEntry("搜神记", "soushenji", "干宝", "志怪神话", "全 463 篇", "东晋志怪小说集大成之作，收录干将莫邪、董永七仙女等众多中华神话典故。")
+        ),
+        "yan5000_cat://guoxue" to listOf(
+            Yan5000BookEntry("论语", "lunyu", "孔子及其弟子", "儒家经典", "全 323 篇", "儒家核心经典，记录孔子及其弟子言行，附简体原文与注释。"),
+            Yan5000BookEntry("菜根谭", "caigentan", "洪应明", "处世修身", "全 352 篇", "融汇儒释道三家智慧的明代格言警句集，咀嚼菜根体味人生真谛。"),
+            Yan5000BookEntry("唐诗三百首", "tangshi", "蘅塘退士 编", "古典诗词", "精选全集", "收录李白、杜甫、王维、白居易等唐代诗坛名家传世名篇。"),
+            Yan5000BookEntry("宋词三百首", "songci", "朱孝臧 编", "古典诗词", "精选全集", "汇集苏轼、辛弃疾、李清照、柳永、晏殊等两宋词坛巅峰佳作。"),
+            Yan5000BookEntry("诗经", "shijing", "先秦民歌与雅颂", "风雅经典", "全 270 篇", "中国最早的诗歌总集，风、雅、颂三部分展现先秦社会生活画卷。"),
+            Yan5000BookEntry("楚辞", "chuci", "屈原 等", "浪漫诗祖", "全 45 篇", "收录《离骚》《九歌》《天问》等中国浪漫主义诗歌源头名篇。"),
+            Yan5000BookEntry("三字经", "sanzijing", "王应麟", "国学蒙学", "全 142 节", "中华传统启蒙经典，三字一句囊括历史、伦理、天文与文化常识。")
+        )
+    )
+
+    private fun Yan5000BookEntry.toNovelBook(source: NovelSource): NovelBook {
+        val url = "https://$subdomain.5000yan.com/"
+        return NovelBook(
+            id = "yan5000_$subdomain",
+            sourceId = source.id,
+            sourceName = source.name,
+            title = title,
+            author = author,
+            intro = intro,
+            kind = kind,
+            latestChapter = chaptersHint,
+            bookUrl = url,
+            tocUrl = url
+        )
+    }
+
+    private fun getCurated5000yanBooks(source: NovelSource, categoryUrl: String): List<NovelBook> {
+        val entries = yan5000Catalog[categoryUrl] ?: yan5000Catalog.values.flatten()
+        return entries.map { it.toNovelBook(source) }
+    }
+
+    private fun search5000yanBooks(source: NovelSource, keyword: String): List<NovelBook> {
+        val q = keyword.trim().lowercase()
+        return yan5000Catalog.values.flatten()
+            .filter {
+                it.title.lowercase().contains(q) ||
+                    it.author.lowercase().contains(q) ||
+                    it.kind.lowercase().contains(q) ||
+                    it.intro.lowercase().contains(q)
+            }
+            .map { it.toNovelBook(source) }
+    }
+
+    companion object {
+        private val yan5000ChapterUrlRegex = Regex("""^https?://[a-z0-9-]+\.5000yan\.com/\d+\.html$""", RegexOption.IGNORE_CASE)
+
+        fun parse5000yanToc(html: String, baseUrl: String): List<NovelChapter> {
+            val doc = Jsoup.parse(html, baseUrl)
+            val seen = LinkedHashSet<String>()
+            val chapters = mutableListOf<NovelChapter>()
+            for (a in doc.select("a[href]")) {
+                val absUrl = a.absUrl("href").trim()
+                val title = a.text().trim()
+                if (title.isBlank() || absUrl in seen) continue
+                if (!yan5000ChapterUrlRegex.matches(absUrl)) continue
+                seen.add(absUrl)
+                chapters.add(NovelChapter(index = chapters.size, title = title, url = absUrl))
+            }
+            return chapters
+        }
+
+        fun parse5000yanChapterHtml(html: String): String {
+            val doc = Jsoup.parse(html)
+            doc.select("script, style, nav, header, footer, .ad, .ads, .breadcrumb").remove()
+            val container = doc.selectFirst("article.reading-content")
+                ?: doc.selectFirst(".grap")
+                ?: doc.selectFirst("article")
+                ?: doc.selectFirst(".content")
+                ?: return ""
+            val paragraphs = container.select("p")
+                .map { it.text().trim() }
+                .filter { it.isNotBlank() && !it.startsWith("上一") && !it.startsWith("下一") }
+            return if (paragraphs.isNotEmpty()) {
+                paragraphs.joinToString("\n\n")
+            } else {
+                NovelRuleEngine.htmlToParagraphs(container.html())
+            }
+        }
     }
 }

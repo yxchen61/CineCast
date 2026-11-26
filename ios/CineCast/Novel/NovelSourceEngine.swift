@@ -16,6 +16,14 @@ final class NovelSourceEngine {
     // MARK: - Explore Categories
 
     func getExploreCategories(source: NovelSource) -> [NovelExploreCategory] {
+        if source.sourceType == .CLASSICS_5000YAN {
+            return [
+                NovelExploreCategory(title: "四大名著", url: "yan5000_cat://sida"),
+                NovelExploreCategory(title: "古典小说名著", url: "yan5000_cat://classical"),
+                NovelExploreCategory(title: "史学与神话", url: "yan5000_cat://history"),
+                NovelExploreCategory(title: "国学经典与诗词", url: "yan5000_cat://guoxue")
+            ]
+        }
         if source.sourceType == .XIMALAYA_PINGSHU {
             return [
                 NovelExploreCategory(title: "热门免费评书", url: "xm_cat://hot"),
@@ -75,6 +83,9 @@ final class NovelSourceEngine {
     // MARK: - Explore & Search
 
     func fetchExplore(source: NovelSource, categoryUrl: String, page: Int = 1) async throws -> [NovelBook] {
+        if source.sourceType == .CLASSICS_5000YAN {
+            return page > 1 ? [] : curated5000yanBooks(source: source, categoryUrl: categoryUrl)
+        }
         if source.sourceType == .XIMALAYA_PINGSHU {
             return await fetchXimalayaPingshuExplore(source: source, categoryUrl: categoryUrl, page: page)
         }
@@ -97,6 +108,11 @@ final class NovelSourceEngine {
     func search(source: NovelSource, keyword: String, page: Int = 1) async throws -> [NovelBook] {
         let q = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return [] }
+        if source.sourceType == .CLASSICS_5000YAN {
+            return curated5000yanBooks(source: source, categoryUrl: "all").filter {
+                $0.title.localizedCaseInsensitiveContains(q) || $0.author.localizedCaseInsensitiveContains(q) || $0.kind.localizedCaseInsensitiveContains(q)
+            }
+        }
         if source.sourceType == .WIKISOURCE_API {
             return await searchWikisourceBooks(source: source, keyword: q)
         }
@@ -112,6 +128,13 @@ final class NovelSourceEngine {
     }
 
     func fetchBookDetailAndToc(source: NovelSource, book: NovelBook) async throws -> (NovelBook, [NovelChapter]) {
+        if source.sourceType == .CLASSICS_5000YAN || book.bookUrl.contains(".5000yan.com") {
+            let html = try await fetchText(urlSpec: book.bookUrl, source: source)
+            let chs = parse5000yanToc(html: html, baseUrl: book.bookUrl)
+            var updated = book
+            updated.latestChapter = chs.last?.title ?? "全本典藏"
+            return (updated, chs)
+        }
         if source.sourceType == .XIMALAYA_PINGSHU || book.bookUrl.hasPrefix("ximalaya_album://") {
             let eps = await fetchXimalayaPingshuEpisodes(source: source, book: book)
             return (book, eps)
@@ -168,6 +191,14 @@ final class NovelSourceEngine {
         if let inline = chapter.inlineContent, !inline.isEmpty {
             return inline
         }
+        if source.sourceType == .CLASSICS_5000YAN || chapter.url.contains(".5000yan.com") {
+            let html = try await fetchText(urlSpec: chapter.url, source: source)
+            let extracted = parse5000yanChapter(html: html)
+            if extracted.isEmpty {
+                throw NSError(domain: "CineCastNovel", code: -1, userInfo: [NSLocalizedDescriptionKey: "未能提取正文"])
+            }
+            return cleanParagraphs(extracted)
+        }
         if source.sourceType == .WIKISOURCE_API || chapter.url.hasPrefix("wikisource://") {
             let page = String(chapter.url.dropFirst("wikisource://".count))
             return try await fetchWikisourceChapterText(source: source, pageTitle: page)
@@ -193,6 +224,7 @@ final class NovelSourceEngine {
         do {
             let probe: String
             switch source.sourceType {
+            case .CLASSICS_5000YAN: probe = "https://sanguo.5000yan.com/"
             case .WIKISOURCE_API: probe = "https://zh.wikisource.org/w/api.php?action=query&meta=siteinfo&format=json"
             case .GUTENDEX_API: probe = "https://gutendex.com/books/?languages=zh&page=1"
             default: probe = source.baseUrl
@@ -809,5 +841,64 @@ final class NovelSourceEngine {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
+    }
+
+    // MARK: - 五千言中华古典名著馆 (5000yan.com 国内直连)
+
+    private func curated5000yanBooks(source: NovelSource, categoryUrl: String) -> [NovelBook] {
+        let items: [(cat: String, title: String, sub: String, author: String, kind: String, hint: String, intro: String)] = [
+            ("yan5000_cat://sida", "三国演义", "sanguo", "罗贯中", "四大名著", "全 120 回", "东汉末年群雄逐鹿历史长篇演义（国内直连简体全本）。"),
+            ("yan5000_cat://sida", "红楼梦", "hongloumeng", "曹雪芹", "四大名著", "全 120 回", "中国古典长篇小说巅峰之作。"),
+            ("yan5000_cat://sida", "西游记", "xiyouji", "吴承恩", "四大名著", "全 100 回", "唐僧师徒四人西天取经神魔古典名著。"),
+            ("yan5000_cat://sida", "水浒传", "shuihu", "施耐庵", "四大名著", "全 120 回", "北宋梁山泊一百零八位好汉英雄传奇。"),
+            ("yan5000_cat://classical", "封神演义", "fengshen", "许仲琳", "古典神魔", "全 100 回", "姜子牙辅佐武王伐纣封神史诗。"),
+            ("yan5000_cat://classical", "聊斋志异", "liaozhai", "蒲松龄", "文言志怪", "全 494 篇", "文言短篇志怪小说巅峰巨著。"),
+            ("yan5000_cat://classical", "儒林外史", "rulin", "吴敬梓", "古典讽刺", "全 56 回", "古代知识分子命运与世态人情讽刺小说典范。"),
+            ("yan5000_cat://classical", "隋唐演义", "suitang", "褚人获", "历史演义", "全 100 回", "瓦岗寨群雄辅佐大唐开国传奇。"),
+            ("yan5000_cat://classical", "镜花缘", "jinghuayuan", "李汝珍", "奇幻古典", "全 100 回", "海外奇国游记与神魔幻想清代奇书。"),
+            ("yan5000_cat://classical", "官场现形记", "guanchang", "李伯元", "晚清谴责", "全 60 回", "晚清四大谴责小说之首。"),
+            ("yan5000_cat://history", "战国策", "zhanguoce", "刘向 编订", "史学谋略", "全 147 篇", "先秦纵横家谋略与外交智慧典籍。"),
+            ("yan5000_cat://history", "搜神记", "soushenji", "干宝", "志怪神话", "全 463 篇", "东晋志怪神话集大成之作。"),
+            ("yan5000_cat://guoxue", "论语", "lunyu", "孔子及其弟子", "儒家经典", "全 323 篇", "儒家核心经典简体原文。"),
+            ("yan5000_cat://guoxue", "菜根谭", "caigentan", "洪应明", "处世修身", "全 352 篇", "明代融汇儒释道智慧格言集。"),
+            ("yan5000_cat://guoxue", "唐诗三百首", "tangshi", "蘅塘退士 编", "古典诗词", "精选全集", "唐代传世名诗精选。"),
+            ("yan5000_cat://guoxue", "宋词三百首", "songci", "朱孝臧 编", "古典诗词", "精选全集", "两宋词坛巅峰佳作。"),
+            ("yan5000_cat://guoxue", "诗经", "shijing", "先秦民歌与雅颂", "风雅经典", "全 270 篇", "中国最早的诗歌总集。"),
+            ("yan5000_cat://guoxue", "楚辞", "chuci", "屈原 等", "浪漫诗祖", "全 45 篇", "收录《离骚》《九歌》等名篇。"),
+            ("yan5000_cat://guoxue", "三字经", "sanzijing", "王应麟", "国学蒙学", "全 142 节", "中华传统启蒙经典。")
+        ]
+        let filtered = categoryUrl == "all" ? items : items.filter { $0.cat == categoryUrl }
+        return filtered.map { e in
+            let url = "https://\(e.sub).5000yan.com/"
+            return NovelBook(id: "yan5000_\(e.sub)", sourceId: source.id, sourceName: source.name, title: e.title, author: e.author, intro: e.intro, kind: e.kind, latestChapter: e.hint, bookUrl: url, tocUrl: url)
+        }
+    }
+
+    private func parse5000yanToc(html: String, baseUrl: String) -> [NovelChapter] {
+        guard let regex = try? NSRegularExpression(pattern: #"<a[^>]+href=["']([^"']*?/\d+\.html)["'][^>]*>([\s\S]*?)</a>"#, options: [.caseInsensitive]) else {
+            return []
+        }
+        let ns = html as NSString
+        var seen = Set<String>()
+        var out: [NovelChapter] = []
+        for match in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+            guard match.numberOfRanges >= 3 else { continue }
+            let href = ns.substring(with: match.range(at: 1))
+            let title = stripHtmlTags(ns.substring(with: match.range(at: 2))).trimmingCharacters(in: .whitespacesAndNewlines)
+            let absUrl = resolveUrl(base: baseUrl, relative: href)
+            guard !title.isEmpty, absUrl.contains(".5000yan.com/"), seen.insert(absUrl).inserted else { continue }
+            out.append(NovelChapter(index: out.count, title: title, url: absUrl))
+        }
+        return out
+    }
+
+    private func parse5000yanChapter(html: String) -> String {
+        if let regex = try? NSRegularExpression(pattern: #"<article[^>]*class=["'][^"']*reading-content[^"']*["'][^>]*>([\s\S]*?)</article>"#, options: [.caseInsensitive]),
+           let m = regex.firstMatch(in: html, range: NSRange(location: 0, length: (html as NSString).length)),
+           m.numberOfRanges >= 2 {
+            let inner = (html as NSString).substring(with: m.range(at: 1))
+            return extractReadableHtmlContent(inner)
+        }
+        return extractReadableHtmlContent(html)
     }
 }

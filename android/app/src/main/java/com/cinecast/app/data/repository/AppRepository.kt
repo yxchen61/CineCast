@@ -66,13 +66,15 @@ class AppRepository(private val context: Context) {
         val loadedSources = if (rawLoaded == null) {
             defaultList
         } else {
-            // Merge newly verified default sources (including v1.4.0 English Cartoon sources) & retire dead v1 URLs
+            // Merge newly verified default sources & retire broken/403 M3U8 URLs
             val deadUrls = setOf(
                 "https://cj.ffzyapi.com/api.php/provide/vod/",
                 "https://cj.ffzyapi.com/api.php/provide/vod/at/xml/",
                 "https://bfzyapi.com/api.php/provide/vod/",
                 "https://api.wujinapi.me/api.php/provide/vod/",
                 "https://suoniapi.com/api.php/provide/vod/",
+                "https://caiji.dyttzyapi.com/api.php/provide/vod/",
+                "https://api.1080zyku.com/inc/apijson.php",
                 "http://cj.ffzyapi.com/api.php/provide/vod/",
                 "http://cj.ffzyapi.com/api.php/provide/vod/at/xml/"
             )
@@ -406,20 +408,6 @@ class AppRepository(private val context: Context) {
                 name = "火狐动漫 (英文动画/海绵宝宝/布鲁伊)",
                 type = SourceType.MACCMS_JSON,
                 apiUrl = "https://hhzyapi.com/api.php/provide/vod/",
-                group = "英文动画 / 欧美动漫精选"
-            ),
-            VideoSource(
-                id = "dytt_en_cartoon",
-                name = "电影天堂动漫 (迪士尼/汪汪队/欧美动漫)",
-                type = SourceType.MACCMS_JSON,
-                apiUrl = "https://caiji.dyttzyapi.com/api.php/provide/vod/",
-                group = "英文动画 / 欧美动漫精选"
-            ),
-            VideoSource(
-                id = "zy1080_en_cartoon",
-                name = "优质1080动画 (欧美少儿/英语动画)",
-                type = SourceType.MACCMS_JSON,
-                apiUrl = "https://api.1080zyku.com/inc/apijson.php",
                 group = "英文动画 / 欧美动漫精选"
             ),
             VideoSource(

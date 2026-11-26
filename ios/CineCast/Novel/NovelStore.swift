@@ -480,8 +480,13 @@ final class NovelStore: ObservableObject {
         let defaults = Self.defaultNovelSources()
         if let saved: [NovelSource] = read("novel_sources.json") {
             let isPreV140 = !saved.contains(where: { $0.id == "open_wikisource_classics" })
+            let isPreV160 = !saved.contains(where: { $0.id == "open_5000yan_classics" })
             let flakyIds: Set<String> = ["git_xiu2_sudugu", "git_liufuyou_qbtr"]
+            let overseasIds: Set<String> = ["open_wikisource_classics", "open_gutendex_classics"]
             let cleaned = saved.map { src -> NovelSource in
+                if isPreV160 && overseasIds.contains(src.id) {
+                    var c = src; c.enabled = false; c.group = "海外公版源 (需科学上网)"; return c
+                }
                 if isPreV140 && flakyIds.contains(src.id) {
                     var c = src; c.enabled = false; c.group = "备用网页规则源 (按需手动开启)"; return c
                 }
@@ -490,7 +495,7 @@ final class NovelStore: ObservableObject {
             let existingIds = Set(cleaned.map(\.id))
             let missing = defaults.filter { !existingIds.contains($0.id) && $0.enabled }
             sources = missing + cleaned
-            if !missing.isEmpty || isPreV140 { persist(sources, file: "novel_sources.json") }
+            if !missing.isEmpty || isPreV140 || isPreV160 { persist(sources, file: "novel_sources.json") }
         } else {
             sources = defaults
             persist(sources, file: "novel_sources.json")
@@ -515,20 +520,12 @@ final class NovelStore: ObservableObject {
     static func defaultNovelSources() -> [NovelSource] {
         [
             NovelSource(
-                id: "open_wikisource_classics",
-                name: "维基文库 · 中文名著典藏 (100%可读)",
-                baseUrl: "https://zh.wikisource.org",
-                group: "名著典藏 (永久直连)",
-                sourceType: .WIKISOURCE_API,
-                searchUrl: "https://zh.wikisource.org/w/api.php"
-            ),
-            NovelSource(
-                id: "open_gutendex_classics",
-                name: "古登堡世界名著 (中英公版经典)",
-                baseUrl: "https://gutendex.com",
-                group: "名著典藏 (永久直连)",
-                sourceType: .GUTENDEX_API,
-                searchUrl: "https://gutendex.com/books/?search={{key}}&page={{page}}"
+                id: "open_5000yan_classics",
+                name: "五千言 · 中华古典名著馆 (国内直连)",
+                baseUrl: "https://www.5000yan.com",
+                group: "名著典藏 (国内直连秒开)",
+                sourceType: .CLASSICS_5000YAN,
+                searchUrl: "https://www.5000yan.com"
             ),
             NovelSource(
                 id: "git_xiu2_kuwo",

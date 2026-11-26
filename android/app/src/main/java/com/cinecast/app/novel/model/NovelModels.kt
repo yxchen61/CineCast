@@ -7,8 +7,9 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 enum class NovelSourceType(val displayName: String, val badge: String) {
-    WIKISOURCE_API("维基文库名著典藏", "典藏"),
-    GUTENDEX_API("古登堡世界名著库", "名著"),
+    CLASSICS_5000YAN("五千言中华古典名著馆", "名著直连"),
+    WIKISOURCE_API("维基文库名著典藏", "维基"),
+    GUTENDEX_API("古登堡世界名著库", "古登堡"),
     LEGADO_JSON("Legado JSON API 书源", "API"),
     LEGADO_HTML("Legado HTML 规则书源", "规则"),
     XIMALAYA_PINGSHU("喜马拉雅评书音频源", "评书"),

@@ -24,7 +24,8 @@ class MusicSourceEngine {
         category: MusicChartCategory,
         page: Int = 1
     ): List<MusicTrack> = withContext(Dispatchers.IO) {
-        when (source.sourceType) {
+        val raw = when (source.sourceType) {
+            MusicSourceType.BILIBILI_MUSIC -> searchBilibiliMusic(source, category.idOrQuery, page)
             MusicSourceType.VKEYS_API -> searchVkeys(source, category.idOrQuery)
             MusicSourceType.KUWO_DIRECT -> fetchKuwoBang(source, category.idOrQuery)
             MusicSourceType.METING_API -> fetchMetingPlaylist(source, category.idOrQuery)
@@ -32,6 +33,11 @@ class MusicSourceEngine {
             MusicSourceType.AUDIUS_API -> fetchAudiusChart(source, category.idOrQuery)
             MusicSourceType.RADIO_BROWSER -> fetchRadioBrowser(source, category.idOrQuery)
             MusicSourceType.M3U_AUDIO -> fetchM3uTracks(source, category.idOrQuery.ifBlank { source.baseUrl })
+        }
+        if (source.sourceType == MusicSourceType.RADIO_BROWSER || source.sourceType == MusicSourceType.M3U_AUDIO) {
+            raw
+        } else {
+            filterFullVocalTracks(raw, category.title)
         }
     }
 
@@ -42,7 +48,8 @@ class MusicSourceEngine {
     ): List<MusicTrack> = withContext(Dispatchers.IO) {
         val q = keyword.trim()
         if (q.isBlank()) return@withContext emptyList()
-        when (source.sourceType) {
+        val raw = when (source.sourceType) {
+            MusicSourceType.BILIBILI_MUSIC -> searchBilibiliMusic(source, q, page)
             MusicSourceType.VKEYS_API -> searchVkeys(source, q)
             MusicSourceType.KUWO_DIRECT -> searchKuwoDirect(source, q)
             MusicSourceType.GDSTUDIO_API -> searchGdStudio(source, q, page)
@@ -52,6 +59,11 @@ class MusicSourceEngine {
             MusicSourceType.M3U_AUDIO -> fetchM3uTracks(source, source.baseUrl).filter {
                 it.title.contains(q, ignoreCase = true) || it.artist.contains(q, ignoreCase = true)
             }
+        }
+        if (source.sourceType == MusicSourceType.RADIO_BROWSER || source.sourceType == MusicSourceType.M3U_AUDIO) {
+            raw
+        } else {
+            filterFullVocalTracks(raw, q)
         }
     }
 
@@ -66,6 +78,10 @@ class MusicSourceEngine {
         if (track.streamUrl.isNotBlank()) return@withContext track
 
         when (source.sourceType) {
+            MusicSourceType.BILIBILI_MUSIC -> {
+                resolveBilibiliAudioUrl(source, track, preferHighBitrate)
+            }
+
             MusicSourceType.VKEYS_API -> {
                 val base = source.baseUrl.trimEnd('/')
                 val q = if (preferHighBitrate) "8" else "4"
@@ -126,6 +142,36 @@ class MusicSourceEngine {
         var lrcLines = parseLrc(track.rawLyric)
 
         when (source.sourceType) {
+            MusicSourceType.BILIBILI_MUSIC -> {
+                // Background best-effort LRC lookup via Kuwo so Bilibili full-length tracks also show synced lyrics
+                if (lrcLines.isEmpty()) {
+                    lrcLines = runCatching {
+                        val cleanQuery = "${track.title} ${track.artist.takeIf { it != "未知歌手" }.orEmpty()}".trim()
+                        val searchRaw = NetworkClient.getString(
+                            "http://search.kuwo.cn/r.s?all=${encode(cleanQuery)}&ft=music&rformat=json&encoding=utf8&rn=3&pn=0"
+                        ).trim()
+                        val firstId = JSONObject(searchRaw).optJSONArray("abslist")
+                            ?.optJSONObject(0)
+                            ?.let { it.optString("DC_TARGETID").ifBlank { it.optString("MUSICRID").removePrefix("MUSIC_") } }
+                            .orEmpty().trim()
+                        if (firstId.isNotBlank()) {
+                            val infoObj = JSONObject(
+                                NetworkClient.getString("http://m.kuwo.cn/newh5/singles/songinfoandlrc?musicId=$firstId")
+                            ).optJSONObject("data")
+                            val arr = infoObj?.optJSONArray("lrclist")
+                            if (arr != null) {
+                                (0 until arr.length()).mapNotNull { i ->
+                                    val item = arr.optJSONObject(i) ?: return@mapNotNull null
+                                    val text = item.optString("lineLyric").trim()
+                                    val sec = item.optString("time").toDoubleOrNull() ?: return@mapNotNull null
+                                    if (text.isNotBlank()) LrcLine((sec * 1000).toLong(), text) else null
+                                }.sortedBy { it.timeMs }
+                            } else emptyList()
+                        } else emptyList()
+                    }.getOrDefault(emptyList())
+                }
+            }
+
             MusicSourceType.VKEYS_API -> {
                 if (lrcLines.isEmpty()) {
                     val base = source.baseUrl.trimEnd('/')
@@ -210,6 +256,115 @@ class MusicSourceEngine {
     }
 
     // ==================== Protocol Implementations ====================
+
+    private fun bilibiliHeaders(extra: Map<String, String>): Map<String, String> {
+        val base = linkedMapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Referer" to "https://www.bilibili.com/",
+            "Origin" to "https://www.bilibili.com",
+            "Cookie" to "buvid3=11111111-2222-3333-4444-555555555555infoc"
+        )
+        base.putAll(extra)
+        return base
+    }
+
+    private fun searchBilibiliMusic(source: MusicSource, keyword: String, page: Int): List<MusicTrack> {
+        val base = source.baseUrl.trimEnd('/').ifBlank { "https://api.bilibili.com" }
+        val qLower = keyword.lowercase()
+        val allowLongMix = listOf("串烧", "合集", "歌单", "演唱会", "live", "mix", "dj").any { qLower.contains(it) }
+        val url = "$base/x/web-interface/search/type?search_type=video&keyword=${encode(keyword)}&page=${page.coerceAtLeast(1)}"
+        val raw = NetworkClient.getString(url, bilibiliHeaders(source.headers))
+        val arr = JSONObject(raw.trim()).optJSONObject("data")?.optJSONArray("result") ?: return emptyList()
+
+        val list = mutableListOf<MusicTrack>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val bvid = obj.optString("bvid").trim()
+            val rawTitle = stripHtmlEntities(obj.optString("title"))
+            if (bvid.isBlank() || rawTitle.isBlank()) continue
+
+            val durationMs = parseColonDurationToMs(obj.optString("duration"))
+            // Skip short clips (< 75s) and long multi-hour compilations (> 12min) unless user asked for a mix
+            if (durationMs in 1L..74_999L) continue
+            if (!allowLongMix && durationMs > 720_000L) continue
+
+            val rawPic = obj.optString("pic").trim()
+            val coverUrl = when {
+                rawPic.startsWith("//") -> "https:$rawPic"
+                rawPic.startsWith("http://") -> rawPic.replaceFirst("http://", "https://")
+                else -> rawPic
+            }
+            val author = obj.optString("author").trim().ifBlank { "B站音乐" }
+            val (cleanTitle, cleanArtist) = parseBilibiliMusicTitleArtist(rawTitle, author)
+            list.add(
+                MusicTrack(
+                    id = bvid,
+                    sourceId = source.id,
+                    sourceName = source.name,
+                    title = cleanTitle,
+                    artist = cleanArtist,
+                    album = "B站全曲 · ${formatDurationLabel(durationMs)}",
+                    coverUrl = coverUrl,
+                    durationMs = durationMs,
+                    platform = "bilibili"
+                )
+            )
+        }
+        return list.distinctBy { it.id }
+    }
+
+    private fun resolveBilibiliAudioUrl(
+        source: MusicSource,
+        track: MusicTrack,
+        preferHighBitrate: Boolean
+    ): MusicTrack {
+        val base = source.baseUrl.trimEnd('/').ifBlank { "https://api.bilibili.com" }
+        val headers = bilibiliHeaders(source.headers)
+        val viewObj = JSONObject(
+            NetworkClient.getString("$base/x/web-interface/view?bvid=${encode(track.id)}", headers)
+        ).optJSONObject("data") ?: return track
+
+        val cid = viewObj.optLong("cid", 0L)
+        if (cid <= 0L) return track
+        val viewPic = viewObj.optString("pic").trim().let {
+            if (it.startsWith("http://")) it.replaceFirst("http://", "https://") else it
+        }
+        val durationSec = viewObj.optLong("duration", 0L)
+
+        val playObj = JSONObject(
+            NetworkClient.getString(
+                "$base/x/player/playurl?bvid=${encode(track.id)}&cid=$cid&fnval=16&otype=json",
+                headers
+            )
+        ).optJSONObject("data") ?: return track
+
+        var audioUrl = ""
+        val audioArr = playObj.optJSONObject("dash")?.optJSONArray("audio")
+        if (audioArr != null && audioArr.length() > 0) {
+            val candidates = (0 until audioArr.length()).mapNotNull { idx ->
+                val a = audioArr.optJSONObject(idx) ?: return@mapNotNull null
+                val url = a.optString("baseUrl").ifBlank { a.optString("base_url") }.trim()
+                val backup = a.optJSONArray("backupUrl")?.optString(0)
+                    ?.ifBlank { a.optJSONArray("backup_url")?.optString(0) }.orEmpty().trim()
+                val best = url.ifBlank { backup }
+                if (best.startsWith("http")) (a.optLong("bandwidth", 0L) to best) else null
+            }
+            audioUrl = if (preferHighBitrate) {
+                candidates.maxByOrNull { it.first }?.second.orEmpty()
+            } else {
+                candidates.minByOrNull { it.first }?.second.orEmpty()
+            }
+        }
+        if (audioUrl.isBlank()) {
+            audioUrl = playObj.optJSONArray("durl")?.optJSONObject(0)?.optString("url").orEmpty().trim()
+        }
+
+        return track.copy(
+            streamUrl = audioUrl,
+            coverUrl = track.coverUrl.ifBlank { viewPic },
+            durationMs = if (durationSec > 0L) durationSec * 1000L else track.durationMs
+        )
+    }
 
     private fun searchVkeys(source: MusicSource, keyword: String): List<MusicTrack> {
         val base = source.baseUrl.trimEnd('/')
@@ -555,18 +710,102 @@ class MusicSourceEngine {
 
     companion object {
         private val lrcTimeRegex = Regex("""\[(\d{1,3}):(\d{2})(?:\.(\d{1,3}))?]""")
+        private val htmlTagRegex = Regex("""<[^>]+>""")
+
+        /** 伴奏 / 消音 / KTV / 试听片段过滤关键词 */
+        private val accompanimentKeywords = listOf(
+            "伴奏", "ktv", "消音", "纯伴奏", "和声伴奏", "原版伴奏", "高清伴奏", "钢琴伴奏", "吉他伴奏",
+            "无主唱", "无人声", "去人声", "卡拉ok", "karaoke", "backing track", "off vocal",
+            "inst.", "(inst)", "（inst）", "试听版", "试听片段", "30秒试听", "铃声版", "手机铃声"
+        )
+
+        private val allowAccompanimentQueryHints = listOf(
+            "伴奏", "ktv", "消音", "karaoke", "backing", "off vocal", "卡拉ok", "铃声"
+        )
 
         /**
-         * 跨音源同曲容灾匹配算法：从候选列表中挑选与目标歌曲最匹配的同一首歌
+         * 智能过滤伴奏曲目与超短试听片段（<= 65s），确保返回完整版人声歌曲。
+         * 若用户主动搜索含「伴奏/KTV」关键词，则自动放行伴奏结果。
+         */
+        fun filterFullVocalTracks(tracks: List<MusicTrack>, query: String = ""): List<MusicTrack> {
+            if (tracks.isEmpty()) return emptyList()
+            val qLower = query.lowercase()
+            val userExplicitlyWantsAccompaniment = allowAccompanimentQueryHints.any { qLower.contains(it) }
+            val userWantsInstrumental = listOf("纯音乐", "轻音乐", "纯音", "钢琴曲", "instrumental").any { qLower.contains(it) }
+
+            val filtered = tracks.filter { track ->
+                if (track.isLiveRadio) return@filter true
+                // 1. Filter out known short VIP preview clips (<= 65s)
+                if (track.durationMs in 1L..65_000L) return@filter false
+                // 2. Filter out accompaniments / karaoke / backing tracks unless user explicitly requested them
+                if (!userExplicitlyWantsAccompaniment) {
+                    val text = "${track.title} ${track.album}".lowercase()
+                    if (accompanimentKeywords.any { text.contains(it) }) return@filter false
+                    if (!userWantsInstrumental && text.contains("instrumental")) return@filter false
+                }
+                true
+            }
+            return filtered
+        }
+
+        fun stripHtmlEntities(raw: String): String {
+            return raw.replace(htmlTagRegex, "")
+                .replace("&amp;", "&")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&nbsp;", " ")
+                .trim()
+        }
+
+        fun parseColonDurationToMs(durationStr: String): Long {
+            val parts = durationStr.trim().split(":").mapNotNull { it.toLongOrNull() }
+            return when (parts.size) {
+                2 -> (parts[0] * 60L + parts[1]) * 1000L
+                3 -> (parts[0] * 3600L + parts[1] * 60L + parts[2]) * 1000L
+                else -> 0L
+            }
+        }
+
+        private fun formatDurationLabel(durationMs: Long): String {
+            if (durationMs <= 0L) return "完整版"
+            val totalSec = durationMs / 1000L
+            return "%d:%02d".format(totalSec / 60L, totalSec % 60L)
+        }
+
+        private fun parseBilibiliMusicTitleArtist(rawTitle: String, fallbackUp: String): Pair<String, String> {
+            val cleaned = rawTitle
+                .replace(Regex("""[【\[](Hi-Res|FLAC|无损音质|无损|高清|4K|MV|完整版|歌词版|纯享版|官方MV|Official|HQ|SQ)[】\]]""", RegexOption.IGNORE_CASE), "")
+                .trim()
+            val quoted = Regex("""《([^》]+)》""").find(cleaned)?.groupValues?.get(1)?.trim()
+            if (!quoted.isNullOrBlank()) {
+                val prefix = cleaned.substringBefore("《")
+                    .replace(Regex("""[【\[].*?[】\]]"""), "")
+                    .replace(Regex("""[-—_|·/]+$"""), "")
+                    .trim()
+                val artist = if (prefix.length in 1..18) prefix else fallbackUp
+                return quoted to artist
+            }
+            val dashParts = cleaned.split(" - ", " — ", limit = 2)
+            if (dashParts.size == 2 && dashParts[0].trim().length in 1..18 && dashParts[1].trim().isNotBlank()) {
+                return dashParts[1].trim() to dashParts[0].trim()
+            }
+            return cleaned.ifBlank { rawTitle } to fallbackUp
+        }
+
+        /**
+         * 跨音源同曲容灾匹配算法：从候选列表中挑选与目标歌曲最匹配的同一首完整版歌曲
          */
         fun pickBestSameSongCandidate(target: MusicTrack, candidates: List<MusicTrack>): MusicTrack? {
             if (candidates.isEmpty()) return null
+            val vocalCandidates = filterFullVocalTracks(candidates, target.title).ifEmpty { candidates }
             val targetTitle = normalizeSongToken(target.title)
             val targetArtist = normalizeSongToken(target.artist.substringBefore("/").substringBefore("·"))
-            val unwantedKeywords = listOf("伴奏", "纯音乐", "dj版", "铃声", "翻唱", "karaoke", "instrumental")
+            val unwantedKeywords = listOf("伴奏", "纯音乐", "dj版", "铃声", "翻唱", "karaoke", "instrumental", "ktv", "消音")
             val targetRawLower = target.title.lowercase()
 
-            return candidates
+            return vocalCandidates
                 .map { cand ->
                     val candTitle = normalizeSongToken(cand.title)
                     val candArtist = normalizeSongToken(cand.artist)
@@ -589,6 +828,8 @@ class MusicSourceEngine {
                         }
                     }
                     if (score > 0) {
+                        if (cand.durationMs in 1L..65_000L) score -= 80
+                        else if (cand.durationMs in 90_000L..600_000L) score += 15
                         for (kw in unwantedKeywords) {
                             if (candRawLower.contains(kw) && !targetRawLower.contains(kw)) {
                                 score -= 45

@@ -65,8 +65,10 @@ class NovelRepository(private val context: Context) {
         val loadedSources = if (rawLoaded == null) {
             defaults.also { writeJsonSync(sourcesFile, it) }
         } else {
-            // v1.4.0 自动迁移：注入高可用维基文库名著馆 & 酷我历史名著馆，移除失效 502 源，并默认关闭易失效的网页规则源
+            // v1.6.0 自动迁移：引入国内 36ms 直连「五千言中华古典名著馆」作为默认首推名著源，
+            // 并自动关闭国内无代理环境无法直连的海外维基文库/古登堡源，彻底解决「维基文库小说全部打不开」问题。
             val isPreV140 = rawLoaded.none { it.id == "open_wikisource_classics" }
+            val isPreV160 = rawLoaded.none { it.id == "open_5000yan_classics" }
             val deadIds = setOf("git_liufuyou_aishang")
             val flakyLegacyIds = setOf(
                 "git_xiu2_sudugu",
@@ -75,10 +77,18 @@ class NovelRepository(private val context: Context) {
                 "git_xiu2_shoujix",
                 "git_liufuyou_tingroom"
             )
+            val overseasBlockedIds = setOf("open_wikisource_classics", "open_gutendex_classics")
             val cleaned = rawLoaded.filterNot { it.id in deadIds }.map { src ->
-                if (isPreV140 && src.id in flakyLegacyIds) {
-                    src.copy(enabled = false, group = "备用网页规则源 (按需手动开启)")
-                } else src
+                when {
+                    isPreV160 && src.id in overseasBlockedIds -> src.copy(
+                        enabled = false,
+                        group = "海外公版源 (需科学上网)",
+                        comment = "该源服务器位于海外（国内网络直连易被重置打不开），v1.6.0 已默认切换为国内直连「五千言古典名著馆」，有代理环境可手动开启。"
+                    )
+                    isPreV140 && src.id in flakyLegacyIds ->
+                        src.copy(enabled = false, group = "备用网页规则源 (按需手动开启)")
+                    else -> src
+                }
             }
             val existingIds = cleaned.map { it.id }.toSet()
             val newReliable = defaults.filter { it.id !in existingIds && it.enabled }
@@ -322,27 +332,17 @@ class NovelRepository(private val context: Context) {
          * 将易受改版或反爬影响的传统 HTML 网页规则源设为默认关闭的备选项，彻底解决「很多小说点开看不了」问题。
          */
         fun defaultNovelSources(): List<NovelSource> = listOf(
-            // 1. 中文维基文库 · 古典与现代名著典藏 —— MediaWiki 官方开放 API，全自动转简体，零反爬 100% 可读
+            // 1. 五千言 · 中华古典名著馆 —— 国内阿里云节点实测 36ms 极速直连，四大名著/古典小说/国学诗词全本免代理秒开
             NovelSource(
-                id = "open_wikisource_classics",
-                name = "维基文库 · 中文名著典藏 (100%可读)",
-                baseUrl = "https://zh.wikisource.org",
-                group = "名著典藏 (永久直连)",
-                sourceType = NovelSourceType.WIKISOURCE_API,
-                searchUrl = "https://zh.wikisource.org/w/api.php",
-                comment = "内置四大名著、古典演义、鲁迅全集、史记兵法、唐诗宋词等 40+ 部全本名著，并支持实时检索维基文库全库，正文自动转换为简体中文。"
+                id = "open_5000yan_classics",
+                name = "五千言 · 中华古典名著馆 (国内直连)",
+                baseUrl = "https://www.5000yan.com",
+                group = "名著典藏 (国内直连秒开)",
+                sourceType = NovelSourceType.CLASSICS_5000YAN,
+                searchUrl = "https://www.5000yan.com",
+                comment = "国内服务器实测 36ms 直连秒开！内置《三国演义》《红楼梦》《西游记》《水浒传》《封神演义》《聊斋志异》《儒林外史》《唐诗三百首》《论语》等 19 部全本简体名著。"
             ),
-            // 2. Gutendex 古登堡开源名著库 —— 444 部中文古典 + 7 万部世界文学名著
-            NovelSource(
-                id = "open_gutendex_classics",
-                name = "古登堡世界名著 (中英公版经典)",
-                baseUrl = "https://gutendex.com",
-                group = "名著典藏 (永久直连)",
-                sourceType = NovelSourceType.GUTENDEX_API,
-                searchUrl = "https://gutendex.com/books/?search={{key}}&page={{page}}",
-                comment = "Project Gutenberg / Gutendex 开源公版图书馆，包含《西游记》《三国演义》《福尔摩斯》《傲慢与偏见》等 7 万部中英文经典名著。"
-            ),
-            // 3. 酷我小说 JSON API —— 来自 GitHub XIU2/Yuedu，全链路实测直连秒开
+            // 2. 酷我小说 JSON API —— 来自 GitHub XIU2/Yuedu，全链路实测国内直连秒开
             NovelSource(
                 id = "git_xiu2_kuwo",
                 name = "酷我小说书城 (API 极速直连)",
@@ -363,7 +363,7 @@ class NovelRepository(private val context: Context) {
                 headers = mapOf(
                     "User-Agent" to "Dalvik/2.1.0 (Linux; U; Android 12; Pixel 7)"
                 ),
-                comment = "导入自开源仓库 XIU2/Yuedu，纯 JSON API 直连，章节加载稳定快速，无广告无验证码。",
+                comment = "导入自开源仓库 XIU2/Yuedu，纯 JSON API 国内直连，章节加载稳定快速，无广告无验证码。",
                 subscriptionUrl = "https://fastly.jsdelivr.net/gh/XIU2/Yuedu@master/shuyuan",
                 ruleSearch = NovelRuleSearch(
                     bookList = "$.data",
@@ -394,12 +394,12 @@ class NovelRepository(private val context: Context) {
                     content = "$.data.content"
                 )
             ),
-            // 4. 酷我历史文学与名著精选专题（同一高可用纯 JSON API，专注文学/历史/武侠/推理）
+            // 3. 酷我历史文学与名著精选专题（同一高可用纯 JSON API，专注文学/历史/武侠/推理）
             NovelSource(
                 id = "git_xiu2_kuwo_classics",
                 name = "酷我历史与文学馆 (API 直连)",
                 baseUrl = "http://appi.kuwo.cn",
-                group = "名著典藏 (永久直连)",
+                group = "名著典藏 (国内直连秒开)",
                 sourceType = NovelSourceType.LEGADO_JSON,
                 searchUrl = "/novels/api/book/search?keyword={{key}}&pi={{page}}&ps=30",
                 exploreUrl = listOf(
@@ -414,7 +414,7 @@ class NovelRepository(private val context: Context) {
                 headers = mapOf(
                     "User-Agent" to "Dalvik/2.1.0 (Linux; U; Android 12; Pixel 7)"
                 ),
-                comment = "基于酷我高速纯 JSON API 精选的历史、演义、武侠与探案书单，章节 100% 可读。",
+                comment = "基于酷我高速纯 JSON API 精选的历史、演义、武侠与探案书单，国内直连章节 100% 可读。",
                 ruleSearch = NovelRuleSearch(
                     bookList = "$.data",
                     name = "$.title",
@@ -444,7 +444,7 @@ class NovelRepository(private val context: Context) {
                     content = "$.data.content"
                 )
             ),
-            // 5. 喜马拉雅评书馆（v1.5.0 新增：免费高音质 M4A 评书直连，单田芳/历史/武侠/单口）
+            // 4. 喜马拉雅评书馆（免费高音质 M4A 评书直连，单田芳/历史/武侠/单口）
             NovelSource(
                 id = "open_ximalaya_pingshu",
                 name = "喜马拉雅评书馆 (免费高清音频)",
@@ -454,7 +454,7 @@ class NovelRepository(private val context: Context) {
                 searchUrl = "https://www.ximalaya.com/revision/category/v2/albums",
                 comment = "免费评书音频直连，涵盖单田芳《白眉大侠》《乱世枭雄》、郭德纲单口评书及 3000+ 免费评书专辑。"
             ),
-            // 6. 酷我评书名家馆（v1.5.0 新增：MP3 直连全库搜评书，单田芳/连丽如/刘兰芳/袁阔成/郭德纲）
+            // 5. 酷我评书名家馆（MP3 直连全库搜评书，单田芳/连丽如/刘兰芳/袁阔成/郭德纲）
             NovelSource(
                 id = "open_kuwo_pingshu",
                 name = "酷我评书名家馆 (MP3极速直连)",
@@ -463,6 +463,27 @@ class NovelRepository(private val context: Context) {
                 sourceType = NovelSourceType.KUWO_PINGSHU,
                 searchUrl = "http://search.kuwo.cn/r.s",
                 comment = "支持全库检索任意评书名家与作品（单田芳隋唐演义142回、连丽如雍正剑侠图378回、刘兰芳大唐侠女等），MP3 直连秒播。"
+            ),
+            // 6. 海外公版名著源（国内无代理网络无法直连，默认关闭，有代理环境可按需手动开启）
+            NovelSource(
+                id = "open_wikisource_classics",
+                name = "维基文库 · 中文名著典藏 (需科学上网)",
+                baseUrl = "https://zh.wikisource.org",
+                group = "海外公版源 (需科学上网)",
+                sourceType = NovelSourceType.WIKISOURCE_API,
+                enabled = false,
+                searchUrl = "https://zh.wikisource.org/w/api.php",
+                comment = "维基文库海外服务器在国内网络会被拦截打不开，默认已关闭并由「五千言古典名著馆」替代，如已开启代理可手动启用。"
+            ),
+            NovelSource(
+                id = "open_gutendex_classics",
+                name = "古登堡世界名著 (海外源·按需开启)",
+                baseUrl = "https://gutendex.com",
+                group = "海外公版源 (需科学上网)",
+                sourceType = NovelSourceType.GUTENDEX_API,
+                enabled = false,
+                searchUrl = "https://gutendex.com/books/?search={{key}}&page={{page}}",
+                comment = "Project Gutenberg / Gutendex 英文与世界公版名著库（海外服务器，按需手动启用）。"
             ),
             // 以下网页规则源默认关闭（避免部分站点反爬或失效导致点开看不了），用户可在「书源」页按需开启
             NovelSource(

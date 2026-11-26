@@ -494,16 +494,23 @@ class VodSourceEngine {
     }
 
     private fun sortPlaySources(sources: List<VodPlaySource>): List<VodPlaySource> {
-        return sources.sortedByDescending { ps ->
-            val hasM3u8 = ps.name.contains("m3u8", ignoreCase = true) ||
-                ps.episodes.firstOrNull()?.url?.contains(".m3u8", ignoreCase = true) == true
-            val hasMp4 = ps.episodes.firstOrNull()?.url?.contains(".mp4", ignoreCase = true) == true
+        val sorted = sources.sortedByDescending { ps ->
+            val firstUrl = ps.episodes.firstOrNull()?.url.orEmpty().lowercase()
+            val hasM3u8 = firstUrl.contains(".m3u8") || ps.name.contains("m3u8", ignoreCase = true)
+            val hasMp4 = firstUrl.contains(".mp4")
+            val isWebPage = firstUrl.contains("/share/") || firstUrl.endsWith(".html") || firstUrl.endsWith(".htm")
             when {
-                hasM3u8 -> 3
-                hasMp4 -> 2
+                hasM3u8 && !isWebPage -> 4
+                hasMp4 && !isWebPage -> 3
+                !isWebPage -> 2
                 else -> 1
             }
         }
+        val directOnly = sorted.filter { ps ->
+            val u = ps.episodes.firstOrNull()?.url.orEmpty().lowercase()
+            u.contains(".m3u8") || u.contains(".mp4") || u.contains(".flv")
+        }
+        return directOnly.ifEmpty { sorted }
     }
 
     private fun filterCategories(

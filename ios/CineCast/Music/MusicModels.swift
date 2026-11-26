@@ -1,6 +1,7 @@
 import Foundation
 
 enum MusicSourceType: String, Codable, CaseIterable, Identifiable {
+    case BILIBILI_MUSIC
     case VKEYS_API
     case KUWO_DIRECT
     case METING_API
@@ -12,7 +13,8 @@ enum MusicSourceType: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var badge: String {
         switch self {
-        case .VKEYS_API: return "极速"
+        case .BILIBILI_MUSIC: return "全曲直连"
+        case .VKEYS_API: return "Vkeys"
         case .KUWO_DIRECT: return "酷我直连"
         case .METING_API: return "Meting"
         case .GDSTUDIO_API: return "GD API"

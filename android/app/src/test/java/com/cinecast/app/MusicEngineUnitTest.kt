@@ -120,4 +120,41 @@ class MusicEngineUnitTest {
         )
         assertNull(MusicSourceEngine.pickBestSameSongCandidate(target, unrelated))
     }
+
+    @Test
+    fun testAccompanimentAndShortClipFiltering() {
+        val tracks = listOf(
+            com.cinecast.app.music.model.MusicTrack(
+                id = "t1", sourceId = "fast_bilibili_music", sourceName = "B站全曲",
+                title = "晴天", artist = "周杰伦", durationMs = 269_000L
+            ),
+            com.cinecast.app.music.model.MusicTrack(
+                id = "t2", sourceId = "fast_kuwo_direct", sourceName = "酷我",
+                title = "晴天 (原版伴奏)", artist = "周杰伦", durationMs = 269_000L
+            ),
+            com.cinecast.app.music.model.MusicTrack(
+                id = "t3", sourceId = "fast_kuwo_direct", sourceName = "酷我",
+                title = "晴天 KTV消音版", artist = "周杰伦", durationMs = 260_000L
+            ),
+            com.cinecast.app.music.model.MusicTrack(
+                id = "t4", sourceId = "git_meting_injahow", sourceName = "Meting",
+                title = "晴天", artist = "周杰伦", durationMs = 30_000L // 30s VIP preview
+            ),
+            com.cinecast.app.music.model.MusicTrack(
+                id = "t5", sourceId = "open_radiobrowser_fm", sourceName = "FM",
+                title = "FM 103.9 音乐广播", artist = "中国", durationMs = 0L, isLiveRadio = true
+            )
+        )
+        val filtered = MusicSourceEngine.filterFullVocalTracks(tracks, "晴天")
+        assertEquals(2, filtered.size)
+        assertEquals(listOf("t1", "t5"), filtered.map { it.id })
+
+        // Explicit accompaniment search should allow accompaniment tracks through
+        val explicitAcc = MusicSourceEngine.filterFullVocalTracks(tracks, "晴天 伴奏")
+        assertTrue(explicitAcc.any { it.id == "t2" })
+
+        assertEquals(270_000L, MusicSourceEngine.parseColonDurationToMs("4:30"))
+        assertEquals(3_665_000L, MusicSourceEngine.parseColonDurationToMs("1:01:05"))
+        assertEquals("周杰伦《晴天》无损", MusicSourceEngine.stripHtmlEntities("<em class=\"keyword\">周杰伦</em>《晴天》无损"))
+    }
 }

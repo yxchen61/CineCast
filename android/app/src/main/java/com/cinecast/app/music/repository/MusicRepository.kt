@@ -65,11 +65,20 @@ class MusicRepository(private val context: Context) {
         val loadedSources = if (rawLoaded == null) {
             defaults.also { writeJsonSync(sourcesFile, it) }
         } else {
-            // Auto-prepend newly verified domestic fast default sources (Vkeys QQ & Kuwo Direct) on upgrade
+            val isV160Migration = rawLoaded.none { it.id == "fast_bilibili_music" }
             val existingIds = rawLoaded.map { it.id }.toSet()
             val missingFast = defaults.filter { it.id !in existingIds }
-            if (missingFast.isNotEmpty()) {
-                val merged = missingFast + rawLoaded
+            if (isV160Migration || missingFast.isNotEmpty()) {
+                val updatedExisting = rawLoaded.map { src ->
+                    if (isV160Migration && src.id == "fast_vkeys_qq") {
+                        src.copy(
+                            enabled = false,
+                            group = "备用聚合曲库 (易超时/含试听)",
+                            comment = "v1.6.0 已降级为备用源（易超时或返回30秒试听），推荐优先使用 B站全曲直连 / 奇杰雅云音乐。"
+                        )
+                    } else src
+                }
+                val merged = missingFast + updatedExisting
                 writeJsonSync(sourcesFile, merged)
                 merged
             } else rawLoaded
@@ -277,31 +286,48 @@ class MusicRepository(private val context: Context) {
          * 实测全链路可直连播放（含封面与同步 LRC 歌词）的 GitHub 开源生态默认音乐源
          */
         fun defaultMusicSources(): List<MusicSource> = listOf(
-            // #1 默认极速源：QQ 音乐国内 CDN 直连（实测 1~2 秒出歌，800px 高清封面 + 完整 LRC 同步歌词）
+            // #1 默认完整版源：B站无损全曲直连（国内 CDN 秒开、全曲无 30 秒 VIP 截断、自动过滤伴奏与短视频）
             MusicSource(
-                id = "fast_vkeys_qq",
-                name = "QQ音乐极速直连 (默认推荐)",
-                baseUrl = "https://api.vkeys.cn/v2/music/tencent",
-                sourceType = MusicSourceType.VKEYS_API,
-                platform = "tencent",
-                group = "极速直连 (国内实测首选)",
+                id = "fast_bilibili_music",
+                name = "B站全曲无损直连 (默认推荐·完整版)",
+                baseUrl = "https://api.bilibili.com",
+                sourceType = MusicSourceType.BILIBILI_MUSIC,
+                platform = "bilibili",
+                group = "完整版极速直连 (国内实测首选)",
                 charts = listOf(
-                    MusicChartCategory("热歌精选", "热门"),
-                    MusicChartCategory("华语金曲", "周杰伦"),
-                    MusicChartCategory("深情情歌", "陈奕迅"),
-                    MusicChartCategory("抖音爆款", "抖音"),
-                    MusicChartCategory("治愈轻音", "轻音乐")
+                    MusicChartCategory("热歌完整版", "热门华语歌曲 完整版 无损"),
+                    MusicChartCategory("周杰伦全曲", "周杰伦 无损音质 完整版"),
+                    MusicChartCategory("陈奕迅金曲", "陈奕迅 完整版 无损"),
+                    MusicChartCategory("林俊杰全曲", "林俊杰 无损音质 完整版"),
+                    MusicChartCategory("抖音爆款", "抖音热歌 完整版 原唱"),
+                    MusicChartCategory("欧美金曲", "欧美经典流行歌曲 完整版")
                 ),
-                comment = "国内高速直连 QQ 音乐 CDN 音频流，支持 800px 高清封面与逐行 LRC 同步歌词。"
+                comment = "直连 B站国内音频 CDN 提取纯音 DASH M4A 流，100% 完整全曲无 30 秒试听截断，已内置伴奏自动过滤。"
             ),
-            // #2 极速官方榜单源：酷我官方直连（官方热歌/飙升/新歌/抖音榜 + 官方 CDN 秒播）
+            // #2 完整版榜单源：奇杰雅云音乐 320K（实测 200 首网易云热歌全曲 320kbps MP3 直出）
+            MusicSource(
+                id = "fast_qijieya_meting",
+                name = "奇杰雅云音乐 320K (完整版榜单)",
+                baseUrl = "https://api.qijieya.cn/meting/",
+                sourceType = MusicSourceType.METING_API,
+                platform = "netease",
+                group = "完整版极速直连 (国内实测首选)",
+                charts = listOf(
+                    MusicChartCategory("热歌榜", "3778678"),
+                    MusicChartCategory("飙升榜", "19723756"),
+                    MusicChartCategory("新歌榜", "3779629"),
+                    MusicChartCategory("原创榜", "2884035")
+                ),
+                comment = "实测返回 7~11MB 完整版 320kbps 高音质 MP3，支持热歌/飙升/新歌榜与同步 LRC 歌词。"
+            ),
+            // #3 极速官方榜单源：酷我官方直连（官方热歌/飙升/新歌/抖音榜 + 官方 CDN 秒播）
             MusicSource(
                 id = "fast_kuwo_direct",
                 name = "酷我官方高速榜 (直连秒播)",
                 baseUrl = "http://kbangserver.kuwo.cn",
                 sourceType = MusicSourceType.KUWO_DIRECT,
                 platform = "kuwo",
-                group = "极速直连 (国内实测首选)",
+                group = "完整版极速直连 (国内实测首选)",
                 charts = listOf(
                     MusicChartCategory("酷我热歌榜", "16"),
                     MusicChartCategory("酷我飙升榜", "93"),
@@ -309,11 +335,11 @@ class MusicRepository(private val context: Context) {
                     MusicChartCategory("抖音热歌榜", "158"),
                     MusicChartCategory("华语榜", "145")
                 ),
-                comment = "直连酷我官方国内服务器，免代理中转，榜单丰富且音频直链秒开。"
+                comment = "直连酷我官方国内服务器，免代理中转，榜单丰富，若遇试听片段将自动切换完整版源。"
             ),
             MusicSource(
                 id = "git_gdstudio_netease",
-                name = "GD音乐台 · 曲库搜歌 (GitHub/GDStudio)",
+                name = "GD音乐台 · 320K 搜歌 (GitHub/GDStudio)",
                 baseUrl = "https://music-api.gdstudio.xyz/api.php",
                 sourceType = MusicSourceType.GDSTUDIO_API,
                 platform = "netease",
@@ -325,7 +351,7 @@ class MusicRepository(private val context: Context) {
                     MusicChartCategory("国风古韵", "古风"),
                     MusicChartCategory("影视原声", "OST")
                 ),
-                comment = "基于 GDStudio 开源音乐聚合接口，支持 320kbps 高音质搜索、封面与逐行同步歌词。"
+                comment = "基于 GDStudio 开源音乐聚合接口，实测网易云线路可返回 10MB 完整版 320kbps MP3 与逐行歌词。"
             ),
             MusicSource(
                 id = "git_meting_injahow",

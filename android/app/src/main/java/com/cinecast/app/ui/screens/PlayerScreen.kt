@@ -201,10 +201,20 @@ fun PlayerScreen(
             override fun onPlayerError(error: PlaybackException) {
                 isBuffering = false
                 val curState = viewModel.playerState.value
+                val curDetail = curState.detail
                 if (curState.isLiveStream && curState.liveBackupIndex + 1 < curState.liveBackupUrls.size) {
                     val nextLine = curState.liveBackupIndex + 1
                     playbackError = "线路 ${curState.liveBackupIndex + 1} 不可用，正在自动切换至线路 ${nextLine + 1}..."
                     viewModel.selectLiveBackupLine(nextLine)
+                } else if (curDetail != null && curState.playSourceIndex + 1 < curDetail.playSources.size) {
+                    val nextPs = curState.playSourceIndex + 1
+                    val nextEps = curDetail.playSources[nextPs].episodes
+                    val targetEp = curState.episodeIndex.coerceIn(0, (nextEps.size - 1).coerceAtLeast(0))
+                    playbackError = "当前线路不可播，正在自动切换至「${curDetail.playSources[nextPs].name}」..."
+                    viewModel.selectPlaySourceAndEpisode(nextPs, targetEp)
+                } else if (curDetail != null) {
+                    playbackError = "当前视频源播放出错 (${error.errorCodeName})，正自动尝试其他视频源..."
+                    viewModel.autoSwitchSameVodToNextSource(curDetail, curState.episodeIndex)
                 } else {
                     playbackError = "播放出错 (${error.errorCodeName})，请尝试切换播放线路或视频源"
                 }

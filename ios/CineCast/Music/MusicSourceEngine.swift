@@ -11,56 +11,107 @@ final class MusicSourceEngine {
     private init() {}
 
     func fetchChart(source: MusicSource, chart: MusicChartCategory) async throws -> [MusicTrack] {
+        let raw: [MusicTrack]
         switch source.sourceType {
+        case .BILIBILI_MUSIC:
+            raw = try await searchBilibiliMusic(source: source, keyword: chart.idOrQuery)
         case .VKEYS_API:
-            return try await searchVkeys(source: source, keyword: chart.idOrQuery)
+            raw = try await searchVkeys(source: source, keyword: chart.idOrQuery)
         case .KUWO_DIRECT:
-            return try await fetchKuwoBang(source: source, bangId: chart.idOrQuery)
+            raw = try await fetchKuwoBang(source: source, bangId: chart.idOrQuery)
         case .METING_API:
-            return try await fetchMetingPlaylist(source: source, playlistId: chart.idOrQuery)
+            raw = try await fetchMetingPlaylist(source: source, playlistId: chart.idOrQuery)
         case .GDSTUDIO_API:
-            return try await searchGdStudio(source: source, keyword: chart.idOrQuery)
+            raw = try await searchGdStudio(source: source, keyword: chart.idOrQuery)
         case .AUDIUS_API:
-            return try await fetchAudius(source: source, genre: chart.idOrQuery)
+            raw = try await fetchAudius(source: source, genre: chart.idOrQuery)
         case .RADIO_BROWSER:
             return try await fetchRadio(source: source, category: chart.idOrQuery)
         case .M3U_AUDIO:
             return try await fetchM3u(source: source, url: chart.idOrQuery.isEmpty ? source.baseUrl : chart.idOrQuery)
         }
+        return Self.filterFullVocalTracks(raw, query: chart.title)
     }
 
     func search(source: MusicSource, keyword: String) async throws -> [MusicTrack] {
         let q = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return [] }
+        let raw: [MusicTrack]
         switch source.sourceType {
+        case .BILIBILI_MUSIC:
+            raw = try await searchBilibiliMusic(source: source, keyword: q)
         case .VKEYS_API:
-            return try await searchVkeys(source: source, keyword: q)
+            raw = try await searchVkeys(source: source, keyword: q)
         case .KUWO_DIRECT:
-            return try await searchVkeys(source: MusicSource(id: source.id, name: source.name, baseUrl: "https://api.vkeys.cn/v2/music/tencent", sourceType: .VKEYS_API), keyword: q)
+            raw = try await searchVkeys(source: MusicSource(id: source.id, name: source.name, baseUrl: "https://api.vkeys.cn/v2/music/tencent", sourceType: .VKEYS_API), keyword: q)
         case .GDSTUDIO_API:
-            return try await searchGdStudio(source: source, keyword: q)
+            raw = try await searchGdStudio(source: source, keyword: q)
         case .AUDIUS_API:
             let enc = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? q
             let base = source.baseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            let raw = try await NetworkService.shared.fetchString(url: "\(base)/tracks/search?query=\(enc)&limit=25&app_name=CineCast")
-            return parseAudius(source: source, raw: raw)
+            let body = try await NetworkService.shared.fetchString(url: "\(base)/tracks/search?query=\(enc)&limit=25&app_name=CineCast")
+            raw = parseAudius(source: source, raw: body)
         case .RADIO_BROWSER:
             let enc = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? q
             let base = source.baseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            let raw = try await NetworkService.shared.fetchString(url: "\(base)/stations/byname/\(enc)?limit=25&order=votes&reverse=true&hidebroken=true")
-            return parseRadio(source: source, raw: raw)
+            let body = try await NetworkService.shared.fetchString(url: "\(base)/stations/byname/\(enc)?limit=25&order=votes&reverse=true&hidebroken=true")
+            return parseRadio(source: source, raw: body)
         case .METING_API:
             guard let first = source.charts.first else { return [] }
             let list = try await fetchMetingPlaylist(source: source, playlistId: first.idOrQuery)
-            return list.filter { $0.title.localizedCaseInsensitiveContains(q) || $0.artist.localizedCaseInsensitiveContains(q) }
+            raw = list.filter { $0.title.localizedCaseInsensitiveContains(q) || $0.artist.localizedCaseInsensitiveContains(q) }
         case .M3U_AUDIO:
             let list = try await fetchM3u(source: source, url: source.baseUrl)
             return list.filter { $0.title.localizedCaseInsensitiveContains(q) || $0.artist.localizedCaseInsensitiveContains(q) }
         }
+        return Self.filterFullVocalTracks(raw, query: q)
     }
+
+    static func filterFullVocalTracks(_ tracks: [MusicTrack], query: String = "") -> [MusicTrack] {
+        let qLower = query.lowercased()
+        let wantsAcc = ["伴奏", "ktv", "消音", "karaoke", "backing", "off vocal"].contains { qLower.contains($0) }
+        let blocked = ["伴奏", "ktv", "消音", "纯伴奏", "无主唱", "无人声", "去人声", "karaoke", "backing track", "off vocal", "试听版", "试听片段", "铃声版"]
+        return tracks.filter { t in
+            if t.isLiveRadio { return true }
+            if t.durationMs > 0 && t.durationMs <= 65_000 { return false }
+            if !wantsAcc {
+                let text = "\(t.title) \(t.album)".lowercased()
+                if blocked.contains(where: { text.contains($0) }) { return false }
+            }
+            return true
+        }
+    }
+
+    static let bilibiliHeaders: [String: String] = [
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Referer": "https://www.bilibili.com/",
+        "Origin": "https://www.bilibili.com",
+        "Cookie": "buvid3=11111111-2222-3333-4444-555555555555infoc"
+    ]
 
     func resolvePlayableTrack(source: MusicSource, track: MusicTrack) async -> MusicTrack {
         var out = track
+        if source.sourceType == .BILIBILI_MUSIC {
+            let base = source.baseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            if out.streamUrl.isEmpty,
+               let viewRaw = try? await NetworkService.shared.fetchString(url: "\(base)/x/web-interface/view?bvid=\(track.id)", headers: Self.bilibiliHeaders),
+               let vData = viewRaw.data(using: .utf8),
+               let vObj = try? JSONSerialization.jsonObject(with: vData) as? [String: Any],
+               let d = vObj["data"] as? [String: Any],
+               let cid = d["cid"] as? Int64 {
+                if let playRaw = try? await NetworkService.shared.fetchString(url: "\(base)/x/player/playurl?bvid=\(track.id)&cid=\(cid)&fnval=16&otype=json", headers: Self.bilibiliHeaders),
+                   let pData = playRaw.data(using: .utf8),
+                   let pObj = try? JSONSerialization.jsonObject(with: pData) as? [String: Any],
+                   let pd = pObj["data"] as? [String: Any],
+                   let dash = pd["dash"] as? [String: Any],
+                   let audios = dash["audio"] as? [[String: Any]],
+                   let best = audios.max(by: { ($0["bandwidth"] as? Int ?? 0) < ($1["bandwidth"] as? Int ?? 0) }),
+                   let u = (best["baseUrl"] as? String) ?? (best["base_url"] as? String) {
+                    out.streamUrl = u
+                }
+            }
+            return out
+        }
         if source.sourceType == .VKEYS_API {
             let base = source.baseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             if out.streamUrl.isEmpty,
@@ -173,6 +224,32 @@ final class MusicSourceEngine {
     }
 
     // MARK: - Private Fetchers
+
+    private func searchBilibiliMusic(source: MusicSource, keyword: String) async throws -> [MusicTrack] {
+        let enc = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword
+        let base = source.baseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let raw = try await NetworkService.shared.fetchString(
+            url: "\(base)/x/web-interface/search/type?search_type=video&keyword=\(enc)&page=1",
+            headers: Self.bilibiliHeaders
+        )
+        guard let data = raw.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let d = obj["data"] as? [String: Any],
+              let arr = d["result"] as? [[String: Any]] else { return [] }
+        return arr.compactMap { o in
+            let bvid = (o["bvid"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawTitle = (o["title"] as? String ?? "")
+                .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !bvid.isEmpty, !rawTitle.isEmpty else { return nil }
+            let parts = (o["duration"] as? String ?? "").split(separator: ":").compactMap { Int64($0) }
+            let durMs: Int64 = parts.count == 2 ? (parts[0] * 60 + parts[1]) * 1000 : (parts.count == 3 ? (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000 : 0)
+            if durMs > 0 && (durMs < 75_000 || durMs > 720_000) { return nil }
+            let rawPic = (o["pic"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let cover = rawPic.hasPrefix("//") ? "https:\(rawPic)" : rawPic
+            return MusicTrack(id: bvid, sourceId: source.id, sourceName: source.name, title: rawTitle, artist: (o["author"] as? String ?? "B站音乐"), album: "B站全曲", coverUrl: cover, durationMs: durMs, platform: "bilibili")
+        }
+    }
 
     private func searchVkeys(source: MusicSource, keyword: String) async throws -> [MusicTrack] {
         let enc = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword
