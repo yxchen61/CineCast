@@ -92,6 +92,8 @@ class MusicViewModel : ViewModel() {
 
     private var searchJob: Job? = null
     private var switchJob: Job? = null
+    private var extrasJob: Job? = null
+    private val chartCache = java.util.concurrent.ConcurrentHashMap<String, List<MusicTrack>>()
 
     init {
         audioController.setOnTrackEnded {
@@ -136,6 +138,18 @@ class MusicViewModel : ViewModel() {
             return
         }
 
+        val cacheKey = "${source.id}::${targetChart.idOrQuery}"
+        val cachedTracks = chartCache[cacheKey]
+        if (!cachedTracks.isNullOrEmpty()) {
+            _discoverState.value = MusicDiscoverUiState(
+                charts = charts,
+                selectedChartIndex = idx,
+                tracks = cachedTracks,
+                isLoading = false
+            )
+            return
+        }
+
         viewModelScope.launch {
             _discoverState.value = _discoverState.value.copy(
                 charts = charts,
@@ -145,6 +159,7 @@ class MusicViewModel : ViewModel() {
             )
             try {
                 val tracks = musicEngine.fetchChart(source, targetChart, 1)
+                if (tracks.isNotEmpty()) chartCache[cacheKey] = tracks
                 _discoverState.value = _discoverState.value.copy(
                     charts = charts,
                     selectedChartIndex = idx,
@@ -159,6 +174,7 @@ class MusicViewModel : ViewModel() {
                         val firstChart = alt.charts.firstOrNull() ?: continue
                         val altTracks = runCatching { musicEngine.fetchChart(alt, firstChart, 1) }.getOrNull()
                         if (!altTracks.isNullOrEmpty()) {
+                            chartCache["${alt.id}::${firstChart.idOrQuery}"] = altTracks
                             musicRepository.setActiveSource(alt.id)
                             _discoverState.value = MusicDiscoverUiState(
                                 charts = alt.charts,
@@ -201,11 +217,13 @@ class MusicViewModel : ViewModel() {
             // Prioritize GDStudio & Audius for full catalog search
             val prioritized = all.sortedBy {
                 when (it.sourceType) {
-                    MusicSourceType.GDSTUDIO_API -> 0
-                    MusicSourceType.METING_API -> 1
-                    MusicSourceType.AUDIUS_API -> 2
-                    MusicSourceType.RADIO_BROWSER -> 3
-                    MusicSourceType.M3U_AUDIO -> 4
+                    MusicSourceType.VKEYS_API -> 0
+                    MusicSourceType.KUWO_DIRECT -> 1
+                    MusicSourceType.GDSTUDIO_API -> 2
+                    MusicSourceType.AUDIUS_API -> 3
+                    MusicSourceType.METING_API -> 4
+                    MusicSourceType.RADIO_BROWSER -> 5
+                    MusicSourceType.M3U_AUDIO -> 6
                 }
             }
             (listOfNotNull(active?.takeIf { it.searchable }) + prioritized).distinctBy { it.id }.take(8)
@@ -270,11 +288,13 @@ class MusicViewModel : ViewModel() {
         if (name.isBlank()) return
         val targets = getEnabledSources().filter { it.searchable }.sortedBy {
             when (it.sourceType) {
-                MusicSourceType.GDSTUDIO_API -> 0
-                MusicSourceType.AUDIUS_API -> 1
-                MusicSourceType.METING_API -> 2
-                MusicSourceType.RADIO_BROWSER -> 3
-                MusicSourceType.M3U_AUDIO -> 4
+                MusicSourceType.VKEYS_API -> 0
+                MusicSourceType.KUWO_DIRECT -> 1
+                MusicSourceType.GDSTUDIO_API -> 2
+                MusicSourceType.AUDIUS_API -> 3
+                MusicSourceType.METING_API -> 4
+                MusicSourceType.RADIO_BROWSER -> 5
+                MusicSourceType.M3U_AUDIO -> 6
             }
         }.take(6)
 
@@ -395,16 +415,18 @@ class MusicViewModel : ViewModel() {
         val track = queue.getOrNull(index) ?: return
         val source = musicRepository.getSourceById(track.sourceId) ?: getActiveSource() ?: return
 
+        extrasJob?.cancel()
         viewModelScope.launch {
             _playerState.value = _playerState.value.copy(
                 currentIndex = index,
                 currentTrack = track,
                 lyrics = MusicSourceEngine.parseLrc(track.rawLyric),
-                isResolvingStream = true,
+                isResolvingStream = track.streamUrl.isBlank(),
                 resolveError = null
             )
             try {
-                val resolved = musicEngine.resolvePlayableTrack(
+                // Step 1: Resolve audio URL ONLY and start ExoPlayer IMMEDIATELY (non-blocking)
+                val resolved = musicEngine.resolveStreamUrlFast(
                     source = source,
                     track = track,
                     preferHighBitrate = settings.value.preferHighBitrate
@@ -423,12 +445,25 @@ class MusicViewModel : ViewModel() {
                 _playerState.value = _playerState.value.copy(
                     queue = updatedQueue,
                     currentTrack = resolved,
-                    lyrics = MusicSourceEngine.parseLrc(resolved.rawLyric),
                     isResolvingStream = false,
                     resolveError = null
                 )
                 audioController.playUrl(resolved.streamUrl)
                 musicRepository.recordRecentPlay(resolved)
+
+                // Step 2: Fetch cover & synced LRC lyrics asynchronously in background (zero audio delay!)
+                extrasJob = launch {
+                    val (cover, lrcLines) = runCatching {
+                        musicEngine.resolveExtrasAsync(source, resolved)
+                    }.getOrDefault(resolved.coverUrl to emptyList())
+                    if (_playerState.value.currentTrack?.uniqueKey == resolved.uniqueKey) {
+                        val enriched = resolved.copy(coverUrl = cover.ifBlank { resolved.coverUrl })
+                        _playerState.value = _playerState.value.copy(
+                            currentTrack = enriched,
+                            lyrics = if (lrcLines.isNotEmpty()) lrcLines else _playerState.value.lyrics
+                        )
+                    }
+                }
             } catch (e: Exception) {
                 _playerState.value = _playerState.value.copy(
                     isResolvingStream = false,
@@ -617,6 +652,14 @@ class MusicViewModel : ViewModel() {
         viewModelScope.launch {
             val existing = existingId?.let { musicRepository.getSourceById(it) }
             val defaultCharts = existing?.charts?.takeIf { it.isNotEmpty() } ?: when (type) {
+                MusicSourceType.VKEYS_API -> listOf(
+                    MusicChartCategory("热歌精选", "热门"),
+                    MusicChartCategory("华语金曲", "周杰伦")
+                )
+                MusicSourceType.KUWO_DIRECT -> listOf(
+                    MusicChartCategory("酷我热歌榜", "16"),
+                    MusicChartCategory("酷我飙升榜", "93")
+                )
                 MusicSourceType.METING_API -> listOf(
                     MusicChartCategory("热歌榜", "3778678"),
                     MusicChartCategory("飙升榜", "19723756"),

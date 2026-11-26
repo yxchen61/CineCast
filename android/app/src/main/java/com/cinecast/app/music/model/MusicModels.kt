@@ -7,6 +7,8 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 enum class MusicSourceType(val displayName: String, val badge: String) {
+    VKEYS_API("QQ/云音乐极速直连 (Vkeys)", "极速"),
+    KUWO_DIRECT("酷我官方高速直连", "酷我直连"),
     METING_API("Meting 开源音乐接口", "Meting"),
     GDSTUDIO_API("GDStudio 聚合音乐 API", "GD API"),
     AUDIUS_API("Audius 开源独立音乐", "Audius"),

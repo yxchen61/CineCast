@@ -124,6 +124,8 @@ class MusicSourceParser {
 
         val typeStr = obj.optString("sourceType").ifBlank { obj.optString("type") }.uppercase()
         val sourceType = when {
+            typeStr.contains("VKEYS") || baseUrl.contains("vkeys.cn") -> MusicSourceType.VKEYS_API
+            typeStr.contains("KUWO") || baseUrl.contains("kuwo.cn") -> MusicSourceType.KUWO_DIRECT
             typeStr.contains("GDSTUDIO") || baseUrl.contains("gdstudio") -> MusicSourceType.GDSTUDIO_API
             typeStr.contains("METING") || baseUrl.contains("meting") -> MusicSourceType.METING_API
             typeStr.contains("AUDIUS") || baseUrl.contains("audius") -> MusicSourceType.AUDIUS_API
@@ -227,6 +229,19 @@ class MusicSourceParser {
     }
 
     private fun defaultChartsFor(type: MusicSourceType, baseUrl: String): List<MusicChartCategory> = when (type) {
+        MusicSourceType.VKEYS_API -> listOf(
+            MusicChartCategory("热歌精选", "热门"),
+            MusicChartCategory("华语金曲", "周杰伦"),
+            MusicChartCategory("抖音热歌", "抖音"),
+            MusicChartCategory("治愈轻音", "轻音乐")
+        )
+        MusicSourceType.KUWO_DIRECT -> listOf(
+            MusicChartCategory("酷我热歌榜", "16"),
+            MusicChartCategory("酷我飙升榜", "93"),
+            MusicChartCategory("酷我新歌榜", "17"),
+            MusicChartCategory("抖音热歌榜", "158"),
+            MusicChartCategory("华语金曲榜", "145")
+        )
         MusicSourceType.METING_API -> listOf(
             MusicChartCategory("热歌榜", "3778678"),
             MusicChartCategory("飙升榜", "19723756"),

@@ -1,5 +1,35 @@
 [
   {
+    "id": "fast_vkeys_qq",
+    "name": "QQ音乐极速直连 (默认推荐)",
+    "baseUrl": "https://api.vkeys.cn/v2/music/tencent",
+    "sourceType": "VKEYS_API",
+    "platform": "tencent",
+    "group": "极速直连 (国内实测首选)",
+    "charts": [
+      { "title": "热歌精选", "idOrQuery": "热门" },
+      { "title": "华语金曲", "idOrQuery": "周杰伦" },
+      { "title": "抖音爆款", "idOrQuery": "抖音" },
+      { "title": "治愈轻音", "idOrQuery": "轻音乐" }
+    ],
+    "comment": "国内直连 QQ 音乐 CDN 音频流，支持 800px 高清封面与逐行 LRC 同步歌词。"
+  },
+  {
+    "id": "fast_kuwo_direct",
+    "name": "酷我官方高速榜 (直连秒播)",
+    "baseUrl": "http://kbangserver.kuwo.cn",
+    "sourceType": "KUWO_DIRECT",
+    "platform": "kuwo",
+    "group": "极速直连 (国内实测首选)",
+    "charts": [
+      { "title": "酷我热歌榜", "idOrQuery": "16" },
+      { "title": "酷我飙升榜", "idOrQuery": "93" },
+      { "title": "酷我新歌榜", "idOrQuery": "17" },
+      { "title": "抖音热歌榜", "idOrQuery": "158" }
+    ],
+    "comment": "直连酷我官方国内服务器，免代理中转，榜单丰富且音频直链秒开。"
+  },
+  {
     "id": "git_meting_injahow",
     "name": "云音乐榜单 (GitHub/Meting-Injahow)",
     "baseUrl": "https://api.injahow.cn/meting/",

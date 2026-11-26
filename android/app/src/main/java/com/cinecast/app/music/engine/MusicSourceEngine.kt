@@ -25,6 +25,8 @@ class MusicSourceEngine {
         page: Int = 1
     ): List<MusicTrack> = withContext(Dispatchers.IO) {
         when (source.sourceType) {
+            MusicSourceType.VKEYS_API -> searchVkeys(source, category.idOrQuery)
+            MusicSourceType.KUWO_DIRECT -> fetchKuwoBang(source, category.idOrQuery)
             MusicSourceType.METING_API -> fetchMetingPlaylist(source, category.idOrQuery)
             MusicSourceType.GDSTUDIO_API -> searchGdStudio(source, category.idOrQuery, page)
             MusicSourceType.AUDIUS_API -> fetchAudiusChart(source, category.idOrQuery)
@@ -41,6 +43,8 @@ class MusicSourceEngine {
         val q = keyword.trim()
         if (q.isBlank()) return@withContext emptyList()
         when (source.sourceType) {
+            MusicSourceType.VKEYS_API -> searchVkeys(source, q)
+            MusicSourceType.KUWO_DIRECT -> searchKuwoDirect(source, q)
             MusicSourceType.GDSTUDIO_API -> searchGdStudio(source, q, page)
             MusicSourceType.METING_API -> searchMetingOrFallback(source, q)
             MusicSourceType.AUDIUS_API -> searchAudius(source, q)
@@ -52,62 +56,146 @@ class MusicSourceEngine {
     }
 
     /**
-     * 解析并补全曲目的真实可播音频流、高清封面与 LRC 同步歌词
+     * 第一阶段极速解析：仅获取可播音频直链（不阻塞等待歌词和封面，实现秒播）
      */
-    suspend fun resolvePlayableTrack(
+    suspend fun resolveStreamUrlFast(
         source: MusicSource,
         track: MusicTrack,
         preferHighBitrate: Boolean = true
     ): MusicTrack = withContext(Dispatchers.IO) {
-        if (source.sourceType == MusicSourceType.GDSTUDIO_API) {
-            val base = source.baseUrl.trimEnd('/')
-            val plat = track.platform.ifBlank { source.platform.ifBlank { "netease" } }
-            val br = if (preferHighBitrate) "320" else "192"
+        if (track.streamUrl.isNotBlank()) return@withContext track
 
-            var resolvedUrl = track.streamUrl
-            if (resolvedUrl.isBlank() && track.urlId.isNotBlank()) {
-                val urlJson = runCatching {
-                    JSONObject(NetworkClient.getString("$base?types=url&source=$plat&id=${encode(track.urlId)}&br=$br", source.headers))
+        when (source.sourceType) {
+            MusicSourceType.VKEYS_API -> {
+                val base = source.baseUrl.trimEnd('/')
+                val q = if (preferHighBitrate) "8" else "4"
+                val obj = runCatching {
+                    JSONObject(NetworkClient.getString("$base?id=${encode(track.id)}&quality=$q", source.headers))
                 }.getOrNull()
-                resolvedUrl = urlJson?.optString("url").orEmpty().trim()
+                val dataObj = obj?.optJSONObject("data")
+                var url = dataObj?.optString("url").orEmpty().trim()
+                if (url.isBlank()) {
+                    val fb = runCatching {
+                        JSONObject(NetworkClient.getString("$base?id=${encode(track.id)}&quality=4", source.headers))
+                    }.getOrNull()?.optJSONObject("data")
+                    url = fb?.optString("url").orEmpty().trim()
+                }
+                val cover = dataObj?.optString("cover").orEmpty().ifBlank { track.coverUrl }
+                track.copy(streamUrl = url, coverUrl = cover)
+            }
+
+            MusicSourceType.KUWO_DIRECT -> {
+                val url = runCatching {
+                    NetworkClient.getString(
+                        "http://antiserver.kuwo.cn/anti.s?type=convert_url&rid=MUSIC_${track.id}&format=mp3&response=url",
+                        source.headers
+                    ).trim()
+                }.getOrDefault("")
+                track.copy(streamUrl = if (url.startsWith("http")) url else "")
+            }
+
+            MusicSourceType.GDSTUDIO_API -> {
+                val base = source.baseUrl.trimEnd('/')
+                val plat = track.platform.ifBlank { source.platform.ifBlank { "netease" } }
+                val br = if (preferHighBitrate) "320" else "192"
+                var resolvedUrl = runCatching {
+                    JSONObject(NetworkClient.getString("$base?types=url&source=$plat&id=${encode(track.urlId)}&br=$br", source.headers))
+                        .optString("url").trim()
+                }.getOrDefault("")
                 if (resolvedUrl.isBlank() && br != "128") {
-                    val fallbackJson = runCatching {
+                    resolvedUrl = runCatching {
                         JSONObject(NetworkClient.getString("$base?types=url&source=$plat&id=${encode(track.urlId)}&br=128", source.headers))
-                    }.getOrNull()
-                    resolvedUrl = fallbackJson?.optString("url").orEmpty().trim()
+                            .optString("url").trim()
+                    }.getOrDefault("")
+                }
+                track.copy(streamUrl = resolvedUrl)
+            }
+
+            else -> track
+        }
+    }
+
+    /**
+     * 第二阶段异步补全：在音频已开始播放后并行拉取高清封面与 LRC 同步歌词（零阻塞）
+     */
+    suspend fun resolveExtrasAsync(
+        source: MusicSource,
+        track: MusicTrack
+    ): Pair<String, List<LrcLine>> = withContext(Dispatchers.IO) {
+        var cover = track.coverUrl
+        var lrcLines = parseLrc(track.rawLyric)
+
+        when (source.sourceType) {
+            MusicSourceType.VKEYS_API -> {
+                if (lrcLines.isEmpty()) {
+                    val base = source.baseUrl.trimEnd('/')
+                    val lrcText = runCatching {
+                        JSONObject(NetworkClient.getString("$base/lyric?id=${encode(track.id)}", source.headers))
+                            .optJSONObject("data")?.optString("lrc").orEmpty()
+                    }.getOrDefault("")
+                    lrcLines = parseLrc(lrcText)
                 }
             }
 
-            var resolvedCover = track.coverUrl
-            if (resolvedCover.isBlank() && track.picId.isNotBlank()) {
-                val picJson = runCatching {
-                    JSONObject(NetworkClient.getString("$base?types=pic&source=$plat&id=${encode(track.picId)}&size=500", source.headers))
+            MusicSourceType.KUWO_DIRECT -> {
+                val infoJson = runCatching {
+                    JSONObject(NetworkClient.getString("http://m.kuwo.cn/newh5/singles/songinfoandlrc?musicId=${track.id}", source.headers))
                 }.getOrNull()
-                resolvedCover = picJson?.optString("url").orEmpty().trim()
+                val dataObj = infoJson?.optJSONObject("data")
+                if (cover.isBlank()) {
+                    cover = dataObj?.optJSONObject("songinfo")?.optString("pic").orEmpty().trim()
+                }
+                if (lrcLines.isEmpty()) {
+                    val arr = dataObj?.optJSONArray("lrclist")
+                    if (arr != null) {
+                        val parsed = mutableListOf<LrcLine>()
+                        for (i in 0 until arr.length()) {
+                            val item = arr.optJSONObject(i) ?: continue
+                            val text = item.optString("lineLyric").trim()
+                            val sec = item.optString("time").toDoubleOrNull() ?: continue
+                            if (text.isNotBlank()) parsed.add(LrcLine((sec * 1000).toLong(), text))
+                        }
+                        lrcLines = parsed.sortedBy { it.timeMs }
+                    }
+                }
             }
 
-            var resolvedLrc = track.rawLyric
-            if (resolvedLrc.isBlank() && track.lyricId.isNotBlank()) {
-                val lrcJson = runCatching {
-                    JSONObject(NetworkClient.getString("$base?types=lyric&source=$plat&id=${encode(track.lyricId)}", source.headers))
-                }.getOrNull()
-                resolvedLrc = lrcJson?.optString("lyric").orEmpty().trim()
+            MusicSourceType.GDSTUDIO_API -> {
+                val base = source.baseUrl.trimEnd('/')
+                val plat = track.platform.ifBlank { source.platform.ifBlank { "netease" } }
+                if (cover.isBlank() && track.picId.isNotBlank()) {
+                    cover = runCatching {
+                        JSONObject(NetworkClient.getString("$base?types=pic&source=$plat&id=${encode(track.picId)}&size=500", source.headers))
+                            .optString("url").trim()
+                    }.getOrDefault("")
+                }
+                if (lrcLines.isEmpty() && track.lyricId.isNotBlank()) {
+                    val lrcText = runCatching {
+                        JSONObject(NetworkClient.getString("$base?types=lyric&source=$plat&id=${encode(track.lyricId)}", source.headers))
+                            .optString("lyric").trim()
+                    }.getOrDefault("")
+                    lrcLines = parseLrc(lrcText)
+                }
             }
 
-            return@withContext track.copy(
-                streamUrl = resolvedUrl,
-                coverUrl = resolvedCover,
-                rawLyric = resolvedLrc
-            )
-        }
+            MusicSourceType.METING_API -> {
+                if (lrcLines.isEmpty() && track.lyricUrl.startsWith("http")) {
+                    val lrcText = runCatching { NetworkClient.getString(track.lyricUrl, source.headers) }.getOrDefault("")
+                    lrcLines = parseLrc(lrcText)
+                }
+            }
 
-        // For Meting API: streamUrl is already direct redirectable audio URL; fetch LRC text if lyricUrl exists
-        if (source.sourceType == MusicSourceType.METING_API && track.rawLyric.isBlank() && track.lyricUrl.startsWith("http")) {
-            val lrcText = runCatching { NetworkClient.getString(track.lyricUrl, source.headers) }.getOrDefault("")
-            return@withContext track.copy(rawLyric = lrcText)
+            else -> Unit
         }
+        cover to lrcLines
+    }
 
-        track
+    suspend fun resolvePlayableTrack(
+        source: MusicSource,
+        track: MusicTrack,
+        preferHighBitrate: Boolean = true
+    ): MusicTrack {
+        return resolveStreamUrlFast(source, track, preferHighBitrate)
     }
 
     suspend fun pingSource(source: MusicSource): Long = withContext(Dispatchers.IO) {
@@ -122,6 +210,103 @@ class MusicSourceEngine {
     }
 
     // ==================== Protocol Implementations ====================
+
+    private fun searchVkeys(source: MusicSource, keyword: String): List<MusicTrack> {
+        val base = source.baseUrl.trimEnd('/')
+        val url = "$base?word=${encode(keyword)}&num=25"
+        val raw = NetworkClient.getString(url, source.headers)
+        val arr = JSONObject(raw.trim()).optJSONArray("data") ?: return emptyList()
+        val list = mutableListOf<MusicTrack>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val id = obj.optString("id").trim()
+            val title = obj.optString("song").ifBlank { obj.optString("name") }.trim()
+            if (id.isBlank() || title.isBlank()) continue
+            list.add(
+                MusicTrack(
+                    id = id,
+                    sourceId = source.id,
+                    sourceName = source.name,
+                    title = title,
+                    artist = obj.optString("singer").ifBlank { "未知歌手" },
+                    album = obj.optString("album").trim(),
+                    coverUrl = obj.optString("cover").trim(),
+                    platform = source.platform.ifBlank { "tencent" }
+                )
+            )
+        }
+        return list
+    }
+
+    private fun fetchKuwoBang(source: MusicSource, bangId: String): List<MusicTrack> {
+        val url = "http://kbangserver.kuwo.cn/ksong.s?from=pc&fmt=json&type=bang&data=content&id=$bangId&rn=35&pn=0"
+        val raw = NetworkClient.getString(url, source.headers)
+        val arr = JSONObject(raw.trim()).optJSONArray("musiclist") ?: return emptyList()
+        val list = mutableListOf<MusicTrack>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val id = obj.optString("id").trim()
+            val title = obj.optString("name").trim()
+            if (id.isBlank() || title.isBlank()) continue
+            val picShort = obj.optString("web_albumpic_short").trim()
+            val cover = when {
+                picShort.startsWith("http") -> picShort
+                picShort.isNotBlank() -> "https://img4.kuwo.cn/star/albumcover/$picShort"
+                else -> ""
+            }
+            list.add(
+                MusicTrack(
+                    id = id,
+                    sourceId = source.id,
+                    sourceName = source.name,
+                    title = title,
+                    artist = obj.optString("artist").ifBlank { "未知歌手" },
+                    album = obj.optString("album").trim(),
+                    coverUrl = cover,
+                    durationMs = obj.optLong("duration", 0L) * 1000L,
+                    platform = "kuwo"
+                )
+            )
+        }
+        return list
+    }
+
+    private fun searchKuwoDirect(source: MusicSource, keyword: String): List<MusicTrack> {
+        val url = "http://search.kuwo.cn/r.s?all=${encode(keyword)}&ft=music&rformat=json&encoding=utf8&rn=25&pn=0"
+        val raw = NetworkClient.getString(url, source.headers).trim()
+        // Kuwo search returns single-quoted JSON keys; org.json JSONObject accepts single quotes natively
+        val root = JSONObject(raw)
+        val arr = root.optJSONArray("abslist") ?: return emptyList()
+        val list = mutableListOf<MusicTrack>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val id = obj.optString("DC_TARGETID")
+                .ifBlank { obj.optString("MUSICRID").removePrefix("MUSIC_") }
+                .trim()
+            val title = obj.optString("NAME").ifBlank { obj.optString("SONGNAME") }.trim()
+            if (id.isBlank() || title.isBlank()) continue
+            val picShort = obj.optString("web_albumpic_short").trim()
+            val cover = when {
+                picShort.startsWith("http") -> picShort
+                picShort.isNotBlank() -> "https://img4.kuwo.cn/star/albumcover/$picShort"
+                else -> ""
+            }
+            list.add(
+                MusicTrack(
+                    id = id,
+                    sourceId = source.id,
+                    sourceName = source.name,
+                    title = title.replace("&nbsp;", " "),
+                    artist = obj.optString("ARTIST").replace("&nbsp;", " ").ifBlank { "未知歌手" },
+                    album = obj.optString("ALBUM").replace("&nbsp;", " ").trim(),
+                    coverUrl = cover,
+                    durationMs = obj.optLong("DURATION", 0L) * 1000L,
+                    platform = "kuwo"
+                )
+            )
+        }
+        return list
+    }
 
     private fun fetchMetingPlaylist(source: MusicSource, playlistId: String): List<MusicTrack> {
         val sep = if (source.baseUrl.contains("?")) "&" else "?"

@@ -12,6 +12,10 @@ final class MusicSourceEngine {
 
     func fetchChart(source: MusicSource, chart: MusicChartCategory) async throws -> [MusicTrack] {
         switch source.sourceType {
+        case .VKEYS_API:
+            return try await searchVkeys(source: source, keyword: chart.idOrQuery)
+        case .KUWO_DIRECT:
+            return try await fetchKuwoBang(source: source, bangId: chart.idOrQuery)
         case .METING_API:
             return try await fetchMetingPlaylist(source: source, playlistId: chart.idOrQuery)
         case .GDSTUDIO_API:
@@ -29,6 +33,10 @@ final class MusicSourceEngine {
         let q = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return [] }
         switch source.sourceType {
+        case .VKEYS_API:
+            return try await searchVkeys(source: source, keyword: q)
+        case .KUWO_DIRECT:
+            return try await searchVkeys(source: MusicSource(id: source.id, name: source.name, baseUrl: "https://api.vkeys.cn/v2/music/tencent", sourceType: .VKEYS_API), keyword: q)
         case .GDSTUDIO_API:
             return try await searchGdStudio(source: source, keyword: q)
         case .AUDIUS_API:
@@ -53,6 +61,33 @@ final class MusicSourceEngine {
 
     func resolvePlayableTrack(source: MusicSource, track: MusicTrack) async -> MusicTrack {
         var out = track
+        if source.sourceType == .VKEYS_API {
+            let base = source.baseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            if out.streamUrl.isEmpty,
+               let raw = try? await NetworkService.shared.fetchString(url: "\(base)?id=\(track.id)&quality=8"),
+               let data = raw.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let d = obj["data"] as? [String: Any],
+               let u = d["url"] as? String {
+                out.streamUrl = u
+            }
+            if out.rawLyric.isEmpty,
+               let raw = try? await NetworkService.shared.fetchString(url: "\(base)/lyric?id=\(track.id)"),
+               let data = raw.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let d = obj["data"] as? [String: Any],
+               let lrc = d["lrc"] as? String {
+                out.rawLyric = lrc
+            }
+            return out
+        }
+        if source.sourceType == .KUWO_DIRECT {
+            if out.streamUrl.isEmpty,
+               let u = try? await NetworkService.shared.fetchString(url: "http://antiserver.kuwo.cn/anti.s?type=convert_url&rid=MUSIC_\(track.id)&format=mp3&response=url") {
+                out.streamUrl = u.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return out
+        }
         if source.sourceType == .GDSTUDIO_API {
             let base = source.baseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             let plat = track.platform.isEmpty ? source.platform : track.platform
@@ -138,6 +173,36 @@ final class MusicSourceEngine {
     }
 
     // MARK: - Private Fetchers
+
+    private func searchVkeys(source: MusicSource, keyword: String) async throws -> [MusicTrack] {
+        let enc = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword
+        let base = source.baseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let raw = try await NetworkService.shared.fetchString(url: "\(base)?word=\(enc)&num=25")
+        guard let data = raw.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arr = obj["data"] as? [[String: Any]] else { return [] }
+        return arr.compactMap { o in
+            let id = "\(o["id"] ?? "")"
+            let title = (o["song"] as? String ?? o["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty, !title.isEmpty else { return nil }
+            return MusicTrack(id: id, sourceId: source.id, sourceName: source.name, title: title, artist: (o["singer"] as? String ?? "未知歌手"), album: (o["album"] as? String ?? ""), coverUrl: (o["cover"] as? String ?? ""), platform: source.platform)
+        }
+    }
+
+    private func fetchKuwoBang(source: MusicSource, bangId: String) async throws -> [MusicTrack] {
+        let raw = try await NetworkService.shared.fetchString(url: "http://kbangserver.kuwo.cn/ksong.s?from=pc&fmt=json&type=bang&data=content&id=\(bangId)&rn=35&pn=0")
+        guard let data = raw.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arr = obj["musiclist"] as? [[String: Any]] else { return [] }
+        return arr.compactMap { o in
+            let id = "\(o["id"] ?? "")"
+            let title = (o["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty, !title.isEmpty else { return nil }
+            let picShort = (o["web_albumpic_short"] as? String ?? "")
+            let cover = picShort.hasPrefix("http") ? picShort : (picShort.isEmpty ? "" : "https://img4.kuwo.cn/star/albumcover/\(picShort)")
+            return MusicTrack(id: id, sourceId: source.id, sourceName: source.name, title: title, artist: (o["artist"] as? String ?? "未知歌手"), album: (o["album"] as? String ?? ""), coverUrl: cover, platform: "kuwo")
+        }
+    }
 
     private func fetchMetingPlaylist(source: MusicSource, playlistId: String) async throws -> [MusicTrack] {
         let sep = source.baseUrl.contains("?") ? "&" : "?"

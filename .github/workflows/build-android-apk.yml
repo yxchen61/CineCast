@@ -30,14 +30,14 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew testDebugUnitTest assembleDebug assembleRelease
-          cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/CineCast-Android-v1.3.1-release.apk
+          cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/CineCast-Android-v1.3.2-release.apk
 
       - name: Upload Android APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: CineCast-Android-v1.3.1-APK
+          name: CineCast-Android-v1.3.2-APK
           path: |
-            android/app/build/outputs/apk/release/CineCast-Android-v1.3.1-release.apk
+            android/app/build/outputs/apk/release/CineCast-Android-v1.3.2-release.apk
             android/app/build/outputs/apk/release/app-release.apk
             android/app/build/outputs/apk/debug/app-debug.apk
 
@@ -46,5 +46,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            android/app/build/outputs/apk/release/CineCast-Android-v1.3.1-release.apk
+            android/app/build/outputs/apk/release/CineCast-Android-v1.3.2-release.apk
             android/app/build/outputs/apk/debug/app-debug.apk
