@@ -105,9 +105,7 @@ struct HomeView: View {
                     searchHeaderBar
                 } else {
                     normalHeaderBar
-                    if !store.categories.isEmpty {
-                        categoryBar
-                    }
+                    categoryBar
                 }
             }
             .padding(.top, 8)
@@ -246,6 +244,21 @@ struct HomeView: View {
                         primaryCategoryPill("推荐", selected: store.selectedCategoryId == nil) {
                             selectedYear = "全部"
                             store.selectCategory(nil)
+                        }
+                        let isYang = store.selectedCategoryId == VodSourceEngine.yangyangCategoryId
+                        Button {
+                            selectedYear = "全部"
+                            store.selectCategory(VodSourceEngine.yangyangCategoryId)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "sparkles").font(.caption)
+                                Text("阳阳专区").font(.subheadline.weight(.bold))
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(isYang ? Color.googleGreen : Color.googleGreen.opacity(0.14))
+                            .foregroundColor(isYang ? .white : .googleGreen)
+                            .clipShape(Capsule())
                         }
                         ForEach(topCategories) { cat in
                             let selected = store.selectedCategoryId == cat.id || activeParentId == cat.id

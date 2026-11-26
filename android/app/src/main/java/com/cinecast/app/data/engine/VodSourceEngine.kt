@@ -266,6 +266,7 @@ class VodSourceEngine {
                     remarks = v.optString("vod_remarks").trim(),
                     year = v.optString("vod_year").trim(),
                     area = v.optString("vod_area").trim(),
+                    lang = v.optString("vod_lang").trim(),
                     typeName = v.optString("type_name").trim(),
                     sourceId = source.id,
                     sourceName = source.name,
@@ -539,5 +540,67 @@ class VodSourceEngine {
             .replace("&#39;", "'")
             .replace(Regex("\\s+"), " ")
             .trim()
+    }
+
+    companion object {
+        const val YANGYANG_CATEGORY_ID = "__yangyang_en_cartoons__"
+
+        private val cartoonTitleHints = listOf(
+            "小猪佩奇", "佩奇", "布鲁伊", "汪汪队", "海绵宝宝", "数字积木", "嘟吉",
+            "瓢虫少女", "迪士尼", "皮克斯", "神偷奶爸", "小黄人", "史努比", "猫和老鼠",
+            "冰雪奇缘", "疯狂动物城", "米奇", "托马斯", "海底小纵队", "朵拉", "小马宝莉",
+            "蓝精灵", "辛普森", "功夫熊猫", "玩具总动员", "寻梦环游记", "飞屋环游记",
+            "加菲猫", "巴布工程师", "瑞奇宝宝", "芝麻街", "彭彭丁满", "复仇者集结",
+            "狮子王", "汽车总动员", "超人总动员", "驯龙高手", "冰川时代", "马达加斯加",
+            "peppa", "bluey", "disney", "pixar", "paw patrol", "spongebob", "numberblocks",
+            "卡通", "动画", "动漫"
+        )
+
+        private val nonEnglishDubHints = listOf(
+            "国语", "中文版", "汉语", "普通话", "粤语", "国配", "中配", "日语", "日配", "韩语", "法语", "德语", "西班牙语", "俄语"
+        )
+
+        /**
+         * 严格筛选「阳阳专区」纯英文动画片：
+         * 1. 必须属于动漫/动画/少儿动画类别（排除真人剧集与真人电影）
+         * 2. 必须为英语原声或明确标注英文版/英语版（排除国语/中文配音及日韩语动漫）
+         */
+        fun isStrictEnglishCartoon(item: VodItem): Boolean {
+            val langLower = item.lang.lowercase()
+            val nameLower = item.name.lowercase()
+            val typeLower = item.typeName.lowercase()
+            val areaLower = item.area.lowercase()
+            val remarksLower = item.remarks.lowercase()
+
+            // Exclude adult/live-action obvious mismatches
+            if (typeLower.contains("伦理") || typeLower.contains("福利") || typeLower.contains("综艺") || typeLower.contains("体育")) {
+                return false
+            }
+
+            val isAnimation = typeLower.contains("动漫") ||
+                typeLower.contains("动画") ||
+                typeLower.contains("少儿") ||
+                typeLower.contains("卡通") ||
+                cartoonTitleHints.any { nameLower.contains(it) }
+            if (!isAnimation) return false
+
+            val explicitlyChineseOrOtherDub = nonEnglishDubHints.any { nameLower.contains(it) || remarksLower.contains(it) }
+            val explicitlyEnglishName = nameLower.contains("英文") || nameLower.contains("英语") || nameLower.contains("english")
+            if (explicitlyChineseOrOtherDub && !explicitlyEnglishName) return false
+
+            val langIsEnglish = (langLower.contains("英语") || langLower.contains("英文") || langLower.contains("english")) &&
+                !langLower.contains("国语") && !langLower.contains("汉语") && !langLower.contains("普通话") && !langLower.contains("日语")
+
+            if (langIsEnglish || explicitlyEnglishName) return true
+
+            // When API omits vod_lang, allow ONLY Western animation categories from English-speaking regions without Chinese dub tags
+            if (langLower.isBlank() && typeLower.contains("欧美动漫")) {
+                val westernArea = areaLower.isBlank() ||
+                    areaLower.contains("美国") || areaLower.contains("英国") ||
+                    areaLower.contains("欧美") || areaLower.contains("加拿大") || areaLower.contains("澳")
+                if (westernArea && !explicitlyChineseOrOtherDub) return true
+            }
+            return false
+        }
     }
 }

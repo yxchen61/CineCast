@@ -220,6 +220,7 @@ final class VodSourceEngine {
                 remarks: stringValue(v["vod_remarks"]).trimmingCharacters(in: .whitespacesAndNewlines),
                 year: stringValue(v["vod_year"]).trimmingCharacters(in: .whitespacesAndNewlines),
                 area: stringValue(v["vod_area"]).trimmingCharacters(in: .whitespacesAndNewlines),
+                lang: stringValue(v["vod_lang"]).trimmingCharacters(in: .whitespacesAndNewlines),
                 typeName: stringValue(v["type_name"]).trimmingCharacters(in: .whitespacesAndNewlines),
                 sourceId: source.id,
                 sourceName: source.name,
@@ -329,6 +330,30 @@ final class VodSourceEngine {
         if let s = any as? String { return s }
         if let n = any as? NSNumber { return n.stringValue }
         return ""
+    }
+
+    static let yangyangCategoryId = "__yangyang_en_cartoons__"
+
+    static func isStrictEnglishCartoon(_ item: VodItem) -> Bool {
+        let lang = item.lang.lowercased()
+        let name = item.name.lowercased()
+        let type = item.typeName.lowercased()
+        let area = item.area.lowercased()
+        let remarks = item.remarks.lowercased()
+        if type.contains("伦理") || type.contains("福利") || type.contains("综艺") { return false }
+        let animHints = ["小猪佩奇", "佩奇", "布鲁伊", "汪汪队", "海绵宝宝", "数字积木", "嘟吉", "迪士尼", "皮克斯", "神偷奶爸", "史努比", "猫和老鼠", "冰雪奇缘", "米奇", "辛普森", "动画", "动漫", "卡通", "peppa", "bluey", "disney"]
+        let isAnim = type.contains("动漫") || type.contains("动画") || type.contains("少儿") || animHints.contains(where: { name.contains($0) })
+        guard isAnim else { return false }
+        let nonEn = ["国语", "中文版", "汉语", "普通话", "粤语", "国配", "中配", "日语", "韩语"]
+        let isExplicitNonEn = nonEn.contains(where: { name.contains($0) || remarks.contains($0) })
+        let isExplicitEn = name.contains("英文") || name.contains("英语") || name.contains("english")
+        if isExplicitNonEn && !isExplicitEn { return false }
+        let langEn = (lang.contains("英语") || lang.contains("英文") || lang.contains("english")) && !lang.contains("国语") && !lang.contains("日语")
+        if langEn || isExplicitEn { return true }
+        if lang.isEmpty && type.contains("欧美动漫") && !isExplicitNonEn {
+            return area.isEmpty || area.contains("美国") || area.contains("英国") || area.contains("欧美")
+        }
+        return false
     }
 
     static func cleanHtml(_ raw: String) -> String {

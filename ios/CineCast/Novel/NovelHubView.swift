@@ -71,9 +71,10 @@ struct NovelHubView: View {
                         }
 
                         Picker("阅读分区", selection: $subTab) {
-                            Text("书架(\(novelStore.bookshelf.count))").tag(0)
+                            Text("书架").tag(0)
                             Text("书城").tag(1)
-                            Text("书源(\(novelStore.enabledSources.count))").tag(2)
+                            Text("听评书").tag(2)
+                            Text("书源").tag(3)
                         }
                         .pickerStyle(.segmented)
                     }
@@ -90,6 +91,7 @@ struct NovelHubView: View {
                     switch subTab {
                     case 0: bookshelfBody
                     case 1: discoverBody
+                    case 2: pingshuBody
                     default: sourcesBody
                     }
                 }
@@ -196,6 +198,54 @@ struct NovelHubView: View {
             } else {
                 List(novelStore.exploreBooks) { book in
                     bookRow(book)
+                }
+                .listStyle(.plain)
+            }
+        }
+    }
+
+    // MARK: - 听评书
+    private var pingshuBody: some View {
+        VStack(spacing: 0) {
+            if let active = novelStore.activePingshuAlbum {
+                HStack {
+                    Image(systemName: "headphones").foregroundColor(.googleBlue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(active.title).font(.caption.weight(.semibold)).lineLimit(1)
+                        if novelStore.currentPingshuIndex < novelStore.pingshuEpisodes.count {
+                            Text(novelStore.pingshuEpisodes[novelStore.currentPingshuIndex].title).font(.caption2).foregroundColor(.secondary).lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                    Button { novelStore.togglePingshuPlayPause() } label: {
+                        Image(systemName: novelStore.isPingshuPlaying ? "pause.circle.fill" : "play.circle.fill").font(.title2).foregroundColor(.googleBlue)
+                    }
+                    Button {
+                        Task { await novelStore.playPingshuEpisode(novelStore.currentPingshuIndex + 1) }
+                    } label: {
+                        Image(systemName: "forward.end.fill").foregroundColor(.primary)
+                    }
+                }
+                .padding(12)
+                .background(Color.googleBlueSoft.opacity(0.45))
+            }
+            if novelStore.isLoadingPingshu {
+                Spacer(); ProgressView("加载精选评书..."); Spacer()
+            } else {
+                List(novelStore.pingshuAlbums) { album in
+                    Button {
+                        Task { await novelStore.openPingshuAlbum(album) }
+                    } label: {
+                        HStack(spacing: 12) {
+                            coverBox(title: album.title, url: album.coverUrl)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(album.title).font(.subheadline.weight(.semibold)).foregroundColor(.primary).lineLimit(1)
+                                Text("播讲：\(album.author) · \(album.latestChapter)").font(.caption).foregroundColor(.googleBlue)
+                                Text(album.intro).font(.caption2).foregroundColor(.secondary).lineLimit(2)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
                 }
                 .listStyle(.plain)
             }

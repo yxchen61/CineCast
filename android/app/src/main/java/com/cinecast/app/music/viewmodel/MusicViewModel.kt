@@ -479,6 +479,7 @@ class MusicViewModel : ViewModel() {
             isResolvingStream = false,
             resolveError = null
         )
+        app.pingshuAudioController.pause()
         audioController.playUrl(resolved.streamUrl)
         viewModelScope.launch { musicRepository.recordRecentPlay(resolved) }
 

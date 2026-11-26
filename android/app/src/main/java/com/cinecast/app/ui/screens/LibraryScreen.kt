@@ -284,7 +284,7 @@ fun LibraryScreen(
 
             item {
                 Text(
-                    "极光视界 CineCast v1.4.0 · 影视 · 小说名著 · 多源音乐 · Material Design 3",
+                    "极光视界 CineCast v1.5.0 · 影视 · 阳阳专区 · 阅读听评书 · 多源音乐",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

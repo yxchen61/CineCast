@@ -3,6 +3,7 @@ package com.cinecast.app.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.cinecast.app.CineCastApp
+import com.cinecast.app.data.engine.VodSourceEngine
 import com.cinecast.app.data.model.*
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -16,6 +17,7 @@ import java.util.UUID
 data class HomeUiState(
     val categories: List<VodCategory> = emptyList(),
     val selectedCategoryId: String? = null,
+    val yangyangSubFilter: String = "全部",
     val items: List<VodItem> = emptyList(),
     val isLoading: Boolean = false,
     val isLoadingMore: Boolean = false,
@@ -101,6 +103,10 @@ class MainViewModel : ViewModel() {
             it.enabled && it.type in setOf(SourceType.MACCMS_JSON, SourceType.MACCMS_XML, SourceType.T4_API)
         }
 
+    private var feedJob: Job? = null
+    // Cache discovered English-animation category IDs per source for instant Yangyang Zone paging
+    private val enCartoonCatCache = java.util.concurrent.ConcurrentHashMap<String, List<Pair<String, String>>>()
+
     fun selectSource(sourceId: String) {
         repository.setActiveSource(sourceId)
         _homeState.value = HomeUiState()
@@ -108,11 +114,28 @@ class MainViewModel : ViewModel() {
     }
 
     fun selectCategory(categoryId: String?) {
-        _homeState.value = _homeState.value.copy(selectedCategoryId = categoryId)
+        _homeState.value = _homeState.value.copy(
+            selectedCategoryId = categoryId,
+            items = if (categoryId != _homeState.value.selectedCategoryId) emptyList() else _homeState.value.items
+        )
+        loadHomeFeed(reset = true)
+    }
+
+    fun selectYangyangSubFilter(filter: String) {
+        _homeState.value = _homeState.value.copy(
+            selectedCategoryId = VodSourceEngine.YANGYANG_CATEGORY_ID,
+            yangyangSubFilter = filter,
+            items = emptyList()
+        )
         loadHomeFeed(reset = true)
     }
 
     fun loadHomeFeed(reset: Boolean = false, autoFallback: Boolean = false) {
+        val cur = _homeState.value
+        if (cur.selectedCategoryId == VodSourceEngine.YANGYANG_CATEGORY_ID) {
+            loadYangyangEnglishCartoons(reset = reset)
+            return
+        }
         val source = repository.getSourceById(activeSourceId.value)
             ?: getActiveApiSources().firstOrNull()
         if (source == null) {
@@ -122,14 +145,14 @@ class MainViewModel : ViewModel() {
             )
             return
         }
-        val cur = _homeState.value
         val nextPage = if (reset) 1 else cur.page + 1
         if (!reset && (cur.isLoadingMore || cur.page >= cur.pageCount)) return
 
         val selectedCat = cur.categories.firstOrNull { it.id == cur.selectedCategoryId }
         val childIds = selectedCat?.childIds.orEmpty()
 
-        viewModelScope.launch {
+        feedJob?.cancel()
+        feedJob = viewModelScope.launch {
             _homeState.value = if (reset) {
                 cur.copy(isLoading = true, error = null)
             } else {
@@ -173,6 +196,119 @@ class MainViewModel : ViewModel() {
                     error = "加载失败：${e.message ?: "请检查网络或切换视频源"}"
                 )
             }
+        }
+    }
+
+    /**
+     * 阳阳专区：跨多个高速英文动画源并发拉取，并严格过滤为 100% 英语原声/英文版动画片
+     */
+    private fun loadYangyangEnglishCartoons(reset: Boolean) {
+        val cur = _homeState.value
+        val nextPage = if (reset) 1 else cur.page + 1
+        if (!reset && (cur.isLoadingMore || cur.page >= cur.pageCount)) return
+
+        val preferredIds = listOf(
+            "dytt_en_cartoon",
+            "guangsu_en_cartoon",
+            "subo_en_cartoon",
+            "jszy_json",
+            "huohu_en_cartoon",
+            "zy1080_en_cartoon"
+        )
+        val allApi = getActiveApiSources()
+        val orderedTargets = (preferredIds.mapNotNull { id -> allApi.firstOrNull { it.id == id } } + allApi)
+            .distinctBy { it.id }
+            .take(5)
+        if (orderedTargets.isEmpty()) {
+            _homeState.value = cur.copy(isLoading = false, error = "请先启用至少一个视频源")
+            return
+        }
+
+        feedJob?.cancel()
+        feedJob = viewModelScope.launch {
+            _homeState.value = if (reset) {
+                cur.copy(isLoading = true, error = null)
+            } else {
+                cur.copy(isLoadingMore = true, error = null)
+            }
+
+            val subFilter = _homeState.value.yangyangSubFilter
+            val lock = Any()
+            val accumulated = if (reset) mutableListOf<VodItem>() else cur.items.toMutableList()
+            var maxPages = 10
+
+            val jobs = orderedTargets.map { src ->
+                launch {
+                    val found = withTimeoutOrNull(9500L) {
+                        when (subFilter) {
+                            "少儿启蒙" -> {
+                                if (nextPage == 1) {
+                                    val kws = listOf("数字积木", "小猪佩奇", "布鲁伊", "汪汪队", "海绵宝宝", "史努比", "英文版")
+                                    kws.flatMap { kw ->
+                                        runCatching { vodEngine.search(src, kw, 1) }.getOrDefault(emptyList())
+                                    }
+                                } else emptyList()
+                            }
+                            else -> {
+                                val catPairs = enCartoonCatCache[src.id] ?: run {
+                                    val probe = runCatching { vodEngine.fetchVodList(src, null, 1) }.getOrNull()
+                                    val matched = probe?.categories.orEmpty().filter { c ->
+                                        c.name.contains("欧美动漫") ||
+                                            c.name.contains("动画片") ||
+                                            c.name.contains("动漫电影")
+                                    }.map { it.id to it.name }
+                                    if (matched.isNotEmpty()) enCartoonCatCache[src.id] = matched
+                                    matched
+                                }
+                                val targetCats = when (subFilter) {
+                                    "动画电影" -> catPairs.filter { it.second.contains("动画片") || it.second.contains("电影") }
+                                        .ifEmpty { catPairs }
+                                    "欧美英语动漫" -> catPairs.filter { it.second.contains("欧美动漫") }
+                                        .ifEmpty { catPairs }
+                                    else -> catPairs
+                                }
+                                targetCats.take(2).flatMap { (cid, _) ->
+                                    val pageRes = runCatching { vodEngine.fetchVodList(src, cid, nextPage) }.getOrNull()
+                                    if (pageRes != null && pageRes.pageCount > maxPages) maxPages = pageRes.pageCount
+                                    pageRes?.items.orEmpty()
+                                }
+                            }
+                        }
+                    }.orEmpty()
+
+                    val pureEnglishCartoons = found
+                        .filter { VodSourceEngine.isStrictEnglishCartoon(it) }
+                        .map { item ->
+                            val cleanLang = item.lang.ifBlank { "英语" }
+                            item.copy(
+                                lang = cleanLang,
+                                remarks = if (item.remarks.contains("英")) item.remarks else "英语 · ${item.remarks.ifBlank { "原版动画" }}"
+                            )
+                        }
+
+                    if (pureEnglishCartoons.isNotEmpty()) {
+                        val snap = synchronized(lock) {
+                            accumulated.addAll(pureEnglishCartoons)
+                            accumulated.distinctBy { it.name.lowercase().replace(Regex("[\\s·：:]+"), "") }
+                        }
+                        _homeState.value = _homeState.value.copy(
+                            items = snap,
+                            page = nextPage,
+                            pageCount = if (subFilter == "少儿启蒙") 1 else maxPages.coerceAtLeast(nextPage + 1),
+                            isLoading = false,
+                            error = null
+                        )
+                    }
+                }
+            }
+            jobs.joinAll()
+            val finalItems = _homeState.value.items
+            _homeState.value = _homeState.value.copy(
+                isLoading = false,
+                isLoadingMore = false,
+                page = nextPage,
+                error = if (finalItems.isEmpty()) "暂未拉取到英文动画片，点击重试或切换子分类查看" else null
+            )
         }
     }
 

@@ -10,7 +10,12 @@ enum class NovelSourceType(val displayName: String, val badge: String) {
     WIKISOURCE_API("维基文库名著典藏", "典藏"),
     GUTENDEX_API("古登堡世界名著库", "名著"),
     LEGADO_JSON("Legado JSON API 书源", "API"),
-    LEGADO_HTML("Legado HTML 规则书源", "规则")
+    LEGADO_HTML("Legado HTML 规则书源", "规则"),
+    XIMALAYA_PINGSHU("喜马拉雅评书音频源", "评书"),
+    KUWO_PINGSHU("酷我评书名家音频源", "评书");
+
+    val isAudioPingshu: Boolean
+        get() = this == XIMALAYA_PINGSHU || this == KUWO_PINGSHU
 }
 
 @Serializable
@@ -160,6 +165,24 @@ data class NovelReadingSettings(
     val horizontalMarginDp: Float = 20f,
     val useSerifFont: Boolean = false,
     val keepScreenOn: Boolean = true
+)
+
+@Serializable
+data class PingshuHistoryItem(
+    val bookKey: String,
+    val sourceId: String,
+    val sourceName: String,
+    val title: String,
+    val author: String = "",
+    val coverUrl: String = "",
+    val intro: String = "",
+    val bookUrl: String,
+    val episodeIndex: Int = 0,
+    val episodeTitle: String = "",
+    val totalEpisodes: Int = 0,
+    val positionMs: Long = 0L,
+    val durationMs: Long = 0L,
+    val lastListenedAt: Long = System.currentTimeMillis()
 )
 
 @Serializable

@@ -15,6 +15,7 @@ import com.cinecast.app.music.player.MusicAudioController
 import com.cinecast.app.music.repository.MusicRepository
 import com.cinecast.app.novel.engine.LegadoSourceParser
 import com.cinecast.app.novel.engine.NovelSourceEngine
+import com.cinecast.app.novel.player.PingshuAudioController
 import com.cinecast.app.novel.repository.NovelRepository
 
 class CineCastApp : Application() {
@@ -36,6 +37,8 @@ class CineCastApp : Application() {
     lateinit var novelEngine: NovelSourceEngine
         private set
     lateinit var legadoParser: LegadoSourceParser
+        private set
+    lateinit var pingshuAudioController: PingshuAudioController
         private set
 
     // 独立音乐播放模块依赖（与影视、小说完全隔离）
@@ -66,6 +69,7 @@ class CineCastApp : Application() {
         novelRepository = NovelRepository(this)
         novelEngine = NovelSourceEngine()
         legadoParser = LegadoSourceParser()
+        pingshuAudioController = PingshuAudioController(this)
 
         musicRepository = MusicRepository(this)
         musicEngine = MusicSourceEngine()

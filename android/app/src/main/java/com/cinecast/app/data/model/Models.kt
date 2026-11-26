@@ -77,6 +77,7 @@ data class VodItem(
     val remarks: String = "",
     val year: String = "",
     val area: String = "",
+    val lang: String = "",
     val typeName: String = "",
     val sourceId: String = "",
     val sourceName: String = "",

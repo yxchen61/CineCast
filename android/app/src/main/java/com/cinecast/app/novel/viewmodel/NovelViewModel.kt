@@ -5,12 +5,34 @@ import androidx.lifecycle.viewModelScope
 import com.cinecast.app.CineCastApp
 import com.cinecast.app.novel.model.*
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+
+data class PingshuBrowseUiState(
+    val categories: List<NovelExploreCategory> = emptyList(),
+    val selectedCategoryIndex: Int = 0,
+    val albums: List<NovelBook> = emptyList(),
+    val searchQuery: String = "",
+    val isLoading: Boolean = false,
+    val error: String? = null
+)
+
+data class PingshuPlayerUiState(
+    val album: NovelBook? = null,
+    val source: NovelSource? = null,
+    val episodes: List<NovelChapter> = emptyList(),
+    val currentEpisodeIndex: Int = 0,
+    val isLoading: Boolean = false,
+    val error: String? = null,
+    val sleepTimerRemainingSec: Int = 0,
+    val sleepAfterEpisode: Boolean = false
+)
 
 data class NovelExploreUiState(
     val categories: List<NovelExploreCategory> = emptyList(),
@@ -58,15 +80,25 @@ class NovelViewModel : ViewModel() {
     val novelRepository = app.novelRepository
     private val novelEngine = app.novelEngine
     private val legadoParser = app.legadoParser
+    val pingshuAudioController = app.pingshuAudioController
 
     val sources = novelRepository.sources
     val activeSourceId = novelRepository.activeSourceId
+    val activePingshuSourceId = novelRepository.activePingshuSourceId
     val subscriptions = novelRepository.subscriptions
     val bookshelf = novelRepository.bookshelf
+    val pingshuHistory = novelRepository.pingshuHistory
     val readingSettings = novelRepository.readingSettings
+    val pingshuPlaybackState = pingshuAudioController.state
 
     private val _exploreState = MutableStateFlow(NovelExploreUiState())
     val exploreState: StateFlow<NovelExploreUiState> = _exploreState.asStateFlow()
+
+    private val _pingshuBrowseState = MutableStateFlow(PingshuBrowseUiState())
+    val pingshuBrowseState: StateFlow<PingshuBrowseUiState> = _pingshuBrowseState.asStateFlow()
+
+    private val _pingshuPlayerState = MutableStateFlow(PingshuPlayerUiState())
+    val pingshuPlayerState: StateFlow<PingshuPlayerUiState> = _pingshuPlayerState.asStateFlow()
 
     private val _searchState = MutableStateFlow(NovelSearchUiState())
     val searchState: StateFlow<NovelSearchUiState> = _searchState.asStateFlow()
@@ -87,15 +119,51 @@ class NovelViewModel : ViewModel() {
     private val chapterCache = ConcurrentHashMap<String, String>()
     private var searchJob: Job? = null
     private var switchSourceJob: Job? = null
+    private var pingshuPlayJob: Job? = null
+    private var pingshuErrorSkipCount = 0
 
     init {
+        pingshuAudioController.setOnEpisodeEnded { handlePingshuEpisodeCompleted() }
+        pingshuAudioController.setOnEpisodeError { reason -> handlePingshuPlaybackError(reason) }
+        viewModelScope.launch {
+            var tick = 0
+            while (isActive) {
+                pingshuAudioController.pollProgress()
+                // Sleep timer countdown (1 sec cadence)
+                if (tick % 2 == 0) {
+                    val ps = _pingshuPlayerState.value
+                    if (ps.sleepTimerRemainingSec > 0 && pingshuPlaybackState.value.isPlaying) {
+                        val rem = ps.sleepTimerRemainingSec - 1
+                        _pingshuPlayerState.value = ps.copy(sleepTimerRemainingSec = rem)
+                        if (rem <= 0) {
+                            pingshuAudioController.pause()
+                            _toastMessage.tryEmit("定时关闭已触发，已暂停评书播放")
+                        }
+                    }
+                }
+                // Persist Pingshu listen progress every ~5 seconds while playing
+                if (tick % 10 == 0 && pingshuPlaybackState.value.isPlaying) {
+                    persistCurrentPingshuProgress()
+                }
+                tick++
+                delay(500L)
+            }
+        }
         loadExplore(reset = true, autoFallback = true)
+        loadPingshuExplore(reset = true)
     }
 
-    fun getEnabledSources(): List<NovelSource> = sources.value.filter { it.enabled }
+    fun getEnabledSources(): List<NovelSource> = sources.value.filter { it.enabled && !it.sourceType.isAudioPingshu }
+
+    fun getEnabledPingshuSources(): List<NovelSource> = sources.value.filter { it.enabled && it.sourceType.isAudioPingshu }
 
     fun getActiveSource(): NovelSource? =
-        novelRepository.getSourceById(activeSourceId.value) ?: getEnabledSources().firstOrNull()
+        novelRepository.getSourceById(activeSourceId.value)?.takeIf { !it.sourceType.isAudioPingshu }
+            ?: getEnabledSources().firstOrNull()
+
+    fun getActivePingshuSource(): NovelSource? =
+        novelRepository.getSourceById(activePingshuSourceId.value)?.takeIf { it.sourceType.isAudioPingshu }
+            ?: getEnabledPingshuSources().firstOrNull()
 
     fun selectSource(sourceId: String) {
         novelRepository.setActiveSource(sourceId)
@@ -516,6 +584,313 @@ class NovelViewModel : ViewModel() {
         val curIdx = _readerState.value.currentChapterIndex
         _toastMessage.tryEmit("正在切换至书源：${altBook.sourceName}")
         openReaderFromBook(altBook, emptyList(), curIdx)
+    }
+
+    // ==================== 听评书浏览、搜索与播放控制 ====================
+
+    fun selectPingshuSource(sourceId: String) {
+        novelRepository.setActivePingshuSource(sourceId)
+        _pingshuBrowseState.value = PingshuBrowseUiState()
+        loadPingshuExplore(reset = true)
+    }
+
+    fun selectPingshuCategory(index: Int) {
+        _pingshuBrowseState.value = _pingshuBrowseState.value.copy(
+            selectedCategoryIndex = index,
+            searchQuery = ""
+        )
+        loadPingshuExplore(reset = true)
+    }
+
+    fun updatePingshuSearchQuery(query: String) {
+        _pingshuBrowseState.value = _pingshuBrowseState.value.copy(searchQuery = query)
+    }
+
+    fun loadPingshuExplore(reset: Boolean = true) {
+        val source = getActivePingshuSource()
+        if (source == null) {
+            _pingshuBrowseState.value = PingshuBrowseUiState(error = "请先在「书源」页启用评书音频源")
+            return
+        }
+        val cats = novelEngine.getExploreCategories(source)
+        val cur = _pingshuBrowseState.value
+        val catIdx = cur.selectedCategoryIndex.coerceIn(0, (cats.size - 1).coerceAtLeast(0))
+        val target = cats.getOrNull(catIdx) ?: return
+
+        viewModelScope.launch {
+            _pingshuBrowseState.value = cur.copy(
+                categories = cats,
+                selectedCategoryIndex = catIdx,
+                isLoading = true,
+                error = null
+            )
+            try {
+                val list = novelEngine.fetchExplore(source, target.url, 1)
+                _pingshuBrowseState.value = _pingshuBrowseState.value.copy(
+                    categories = cats,
+                    selectedCategoryIndex = catIdx,
+                    albums = list,
+                    isLoading = false,
+                    error = if (list.isEmpty()) "该分类暂无评书，可切换评书源或搜索" else null
+                )
+            } catch (e: Exception) {
+                _pingshuBrowseState.value = _pingshuBrowseState.value.copy(
+                    isLoading = false,
+                    error = "加载评书列表失败：${e.message ?: "请检查网络"}"
+                )
+            }
+        }
+    }
+
+    fun searchPingshu(keyword: String = _pingshuBrowseState.value.searchQuery) {
+        val q = keyword.trim()
+        if (q.isBlank()) {
+            loadPingshuExplore(reset = true)
+            return
+        }
+        val targets = getEnabledPingshuSources()
+        if (targets.isEmpty()) return
+        viewModelScope.launch {
+            _pingshuBrowseState.value = _pingshuBrowseState.value.copy(
+                searchQuery = q,
+                isLoading = true,
+                error = null
+            )
+            val lock = Any()
+            val acc = mutableListOf<NovelBook>()
+            val jobs = targets.map { src ->
+                launch {
+                    val found = withTimeoutOrNull(9000L) {
+                        runCatching { novelEngine.search(src, q, 1) }.getOrDefault(emptyList())
+                    }.orEmpty()
+                    if (found.isNotEmpty()) {
+                        val snap = synchronized(lock) {
+                            acc.addAll(found)
+                            acc.distinctBy { "${it.sourceId}::${it.bookUrl}" }
+                        }
+                        _pingshuBrowseState.value = _pingshuBrowseState.value.copy(albums = snap, error = null)
+                    }
+                }
+            }
+            jobs.joinAll()
+            val finalAlbums = _pingshuBrowseState.value.albums
+            _pingshuBrowseState.value = _pingshuBrowseState.value.copy(
+                isLoading = false,
+                error = if (finalAlbums.isEmpty()) "未搜到「$q」相关评书" else null
+            )
+        }
+    }
+
+    fun openPingshuAlbum(album: NovelBook, startIndex: Int? = null, startPosMs: Long? = null) {
+        val source = novelRepository.getSourceById(album.sourceId) ?: getActivePingshuSource() ?: return
+        val saved = novelRepository.getPingshuHistory(album.sourceId, album.bookUrl)
+        pingshuPlayJob?.cancel()
+        pingshuPlayJob = viewModelScope.launch {
+            _pingshuPlayerState.value = _pingshuPlayerState.value.copy(
+                album = album,
+                source = source,
+                isLoading = true,
+                error = null
+            )
+            try {
+                val (updatedAlbum, episodes) = novelEngine.fetchBookDetailAndToc(source, album)
+                if (episodes.isEmpty()) {
+                    _pingshuPlayerState.value = _pingshuPlayerState.value.copy(
+                        album = updatedAlbum,
+                        isLoading = false,
+                        error = "未能获取该评书回次目录，请尝试其他评书源"
+                    )
+                    return@launch
+                }
+                val idx = (startIndex ?: saved?.episodeIndex ?: 0).coerceIn(0, episodes.lastIndex)
+                val resumeMs = startPosMs ?: if (startIndex == null || startIndex == saved?.episodeIndex) saved?.positionMs ?: 0L else 0L
+                _pingshuPlayerState.value = _pingshuPlayerState.value.copy(
+                    album = updatedAlbum,
+                    source = source,
+                    episodes = episodes,
+                    currentEpisodeIndex = idx,
+                    isLoading = true,
+                    error = null
+                )
+                playPingshuEpisode(idx, resumeMs)
+            } catch (e: Exception) {
+                _pingshuPlayerState.value = _pingshuPlayerState.value.copy(
+                    isLoading = false,
+                    error = "加载评书目录失败：${e.message}"
+                )
+            }
+        }
+    }
+
+    fun openPingshuFromHistory(item: PingshuHistoryItem) {
+        val album = NovelBook(
+            id = item.bookKey,
+            sourceId = item.sourceId,
+            sourceName = item.sourceName,
+            title = item.title,
+            author = item.author,
+            coverUrl = item.coverUrl,
+            intro = item.intro,
+            kind = "评书",
+            bookUrl = item.bookUrl,
+            tocUrl = item.bookUrl
+        )
+        openPingshuAlbum(album, startIndex = item.episodeIndex, startPosMs = item.positionMs)
+    }
+
+    fun playPingshuEpisode(index: Int, startPosMs: Long = 0L) {
+        val cur = _pingshuPlayerState.value
+        val source = cur.source ?: return
+        val ep = cur.episodes.getOrNull(index) ?: return
+
+        // Pause music player so Pingshu and Music never overlap
+        app.musicAudioController.pause()
+
+        pingshuPlayJob?.cancel()
+        pingshuPlayJob = viewModelScope.launch {
+            _pingshuPlayerState.value = _pingshuPlayerState.value.copy(
+                currentEpisodeIndex = index,
+                isLoading = true,
+                error = null
+            )
+            try {
+                val streamUrl = withTimeoutOrNull(9000L) {
+                    novelEngine.resolvePingshuAudioUrl(source, ep)
+                }
+                if (streamUrl.isNullOrBlank()) {
+                    throw IllegalStateException("该回音频直链解析超时")
+                }
+                pingshuErrorSkipCount = 0
+                _pingshuPlayerState.value = _pingshuPlayerState.value.copy(
+                    currentEpisodeIndex = index,
+                    isLoading = false,
+                    error = null
+                )
+                pingshuAudioController.playUrl(streamUrl, startPosMs)
+                persistCurrentPingshuProgress(explicitPosMs = startPosMs)
+            } catch (e: Exception) {
+                _pingshuPlayerState.value = _pingshuPlayerState.value.copy(
+                    isLoading = false,
+                    error = e.message ?: "解析评书音频失败"
+                )
+                handlePingshuPlaybackError(e.message ?: "解析失败")
+            }
+        }
+    }
+
+    private fun handlePingshuEpisodeCompleted() {
+        val cur = _pingshuPlayerState.value
+        if (cur.sleepAfterEpisode) {
+            _pingshuPlayerState.value = cur.copy(sleepAfterEpisode = false)
+            pingshuAudioController.pause()
+            _toastMessage.tryEmit("本回评书已播完，已自动暂停")
+            return
+        }
+        if (cur.currentEpisodeIndex + 1 < cur.episodes.size) {
+            playPingshuEpisode(cur.currentEpisodeIndex + 1, 0L)
+        } else {
+            _toastMessage.tryEmit("已是最后一回评书")
+        }
+    }
+
+    private fun handlePingshuPlaybackError(reason: String) {
+        val cur = _pingshuPlayerState.value
+        if (cur.currentEpisodeIndex + 1 < cur.episodes.size && pingshuErrorSkipCount < 3) {
+            pingshuErrorSkipCount++
+            _toastMessage.tryEmit("本回暂不可播，自动连播下一回")
+            playPingshuEpisode(cur.currentEpisodeIndex + 1, 0L)
+        } else {
+            _pingshuPlayerState.value = cur.copy(isLoading = false, error = "播放失败：$reason")
+        }
+    }
+
+    fun togglePingshuPlayPause() {
+        if (!pingshuPlaybackState.value.isPlaying) {
+            app.musicAudioController.pause()
+        }
+        pingshuAudioController.togglePlayPause()
+        persistCurrentPingshuProgress()
+    }
+
+    fun pausePingshuAudio() {
+        pingshuAudioController.pause()
+        persistCurrentPingshuProgress()
+    }
+
+    fun seekPingshu(positionMs: Long) {
+        pingshuAudioController.seekTo(positionMs)
+    }
+
+    fun skipPingshuBy(deltaMs: Long) {
+        pingshuAudioController.skipBy(deltaMs)
+    }
+
+    fun nextPingshuEpisode() {
+        val cur = _pingshuPlayerState.value
+        if (cur.currentEpisodeIndex + 1 < cur.episodes.size) {
+            pingshuErrorSkipCount = 0
+            playPingshuEpisode(cur.currentEpisodeIndex + 1, 0L)
+        } else {
+            _toastMessage.tryEmit("已是最后一回")
+        }
+    }
+
+    fun prevPingshuEpisode() {
+        val cur = _pingshuPlayerState.value
+        if (cur.currentEpisodeIndex > 0) {
+            pingshuErrorSkipCount = 0
+            playPingshuEpisode(cur.currentEpisodeIndex - 1, 0L)
+        } else {
+            _toastMessage.tryEmit("已是第一回")
+        }
+    }
+
+    fun setPingshuSpeed(speed: Float) {
+        pingshuAudioController.setSpeed(speed)
+        _toastMessage.tryEmit("评书倍速：${speed}x")
+    }
+
+    fun setPingshuSleepTimer(minutes: Int) {
+        when {
+            minutes == 0 -> {
+                _pingshuPlayerState.value = _pingshuPlayerState.value.copy(sleepTimerRemainingSec = 0, sleepAfterEpisode = false)
+                _toastMessage.tryEmit("已关闭定时停止")
+            }
+            minutes < 0 -> {
+                _pingshuPlayerState.value = _pingshuPlayerState.value.copy(sleepTimerRemainingSec = 0, sleepAfterEpisode = true)
+                _toastMessage.tryEmit("将在播完当前这一回后自动停止")
+            }
+            else -> {
+                _pingshuPlayerState.value = _pingshuPlayerState.value.copy(sleepTimerRemainingSec = minutes * 60, sleepAfterEpisode = false)
+                _toastMessage.tryEmit("已设置 $minutes 分钟后自动停止")
+            }
+        }
+    }
+
+    private fun persistCurrentPingshuProgress(explicitPosMs: Long? = null) {
+        val ps = _pingshuPlayerState.value
+        val album = ps.album ?: return
+        val ep = ps.episodes.getOrNull(ps.currentEpisodeIndex) ?: return
+        val pb = pingshuPlaybackState.value
+        viewModelScope.launch {
+            novelRepository.savePingshuProgress(
+                PingshuHistoryItem(
+                    bookKey = "${album.sourceId}::${album.bookUrl}",
+                    sourceId = album.sourceId,
+                    sourceName = album.sourceName,
+                    title = album.title,
+                    author = album.author,
+                    coverUrl = album.coverUrl,
+                    intro = album.intro,
+                    bookUrl = album.bookUrl,
+                    episodeIndex = ps.currentEpisodeIndex,
+                    episodeTitle = ep.title,
+                    totalEpisodes = ps.episodes.size,
+                    positionMs = explicitPosMs ?: pb.positionMs,
+                    durationMs = pb.durationMs
+                )
+            )
+        }
     }
 
     // ==================== Reading Typography & Theme Settings ====================

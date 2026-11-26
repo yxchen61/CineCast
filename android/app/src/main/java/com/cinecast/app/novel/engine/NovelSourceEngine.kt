@@ -29,6 +29,23 @@ class NovelSourceEngine {
     private val gutenbergChaptersCache = ConcurrentHashMap<String, List<NovelChapter>>()
 
     fun getExploreCategories(source: NovelSource): List<NovelExploreCategory> {
+        if (source.sourceType == NovelSourceType.XIMALAYA_PINGSHU) {
+            return listOf(
+                NovelExploreCategory("热门免费评书", "xm_cat://hot"),
+                NovelExploreCategory("单田芳经典", "xm_cat://shantianfang"),
+                NovelExploreCategory("历史演义", "xm_cat://history"),
+                NovelExploreCategory("武侠公案", "xm_cat://wuxia"),
+                NovelExploreCategory("单口评书", "xm_cat://guodegang")
+            )
+        }
+        if (source.sourceType == NovelSourceType.KUWO_PINGSHU) {
+            return listOf(
+                NovelExploreCategory("单田芳全集", "kw_cat://shantianfang"),
+                NovelExploreCategory("连丽如/刘兰芳", "kw_cat://masters"),
+                NovelExploreCategory("三国/红楼/水浒", "kw_cat://classics"),
+                NovelExploreCategory("郭德纲评书", "kw_cat://guodegang")
+            )
+        }
         if (source.sourceType == NovelSourceType.WIKISOURCE_API) {
             return listOf(
                 NovelExploreCategory("四大名著与演义", "ws_cat://sida"),
@@ -57,6 +74,12 @@ class NovelSourceEngine {
         categoryUrl: String,
         page: Int = 1
     ): List<NovelBook> = withContext(Dispatchers.IO) {
+        if (source.sourceType == NovelSourceType.XIMALAYA_PINGSHU) {
+            return@withContext fetchXimalayaPingshuExplore(source, categoryUrl, page)
+        }
+        if (source.sourceType == NovelSourceType.KUWO_PINGSHU) {
+            return@withContext fetchKuwoPingshuExplore(source, categoryUrl, page)
+        }
         if (source.sourceType == NovelSourceType.WIKISOURCE_API) {
             if (page > 1) return@withContext emptyList()
             return@withContext getCuratedWikisourceBooks(source, categoryUrl)
@@ -80,6 +103,12 @@ class NovelSourceEngine {
         val q = keyword.trim()
         if (q.isBlank()) return@withContext emptyList()
 
+        if (source.sourceType == NovelSourceType.XIMALAYA_PINGSHU) {
+            return@withContext searchXimalayaPingshu(source, q)
+        }
+        if (source.sourceType == NovelSourceType.KUWO_PINGSHU) {
+            return@withContext searchKuwoPingshu(source, q)
+        }
         if (source.sourceType == NovelSourceType.WIKISOURCE_API) {
             return@withContext searchWikisourceBooks(source, q)
         }
@@ -100,6 +129,17 @@ class NovelSourceEngine {
         source: NovelSource,
         book: NovelBook
     ): Pair<NovelBook, List<NovelChapter>> = withContext(Dispatchers.IO) {
+        if (source.sourceType == NovelSourceType.XIMALAYA_PINGSHU || book.bookUrl.startsWith("ximalaya_album://")) {
+            val episodes = fetchXimalayaPingshuEpisodes(source, book)
+            return@withContext book.copy(latestChapter = "共 ${episodes.size} 回") to episodes
+        }
+        if (source.sourceType == NovelSourceType.KUWO_PINGSHU ||
+            book.bookUrl.startsWith("kuwo_album://") ||
+            book.bookUrl.startsWith("kuwo_search://")
+        ) {
+            val episodes = fetchKuwoPingshuEpisodes(source, book)
+            return@withContext book.copy(latestChapter = "共 ${episodes.size} 回") to episodes
+        }
         if (source.sourceType == NovelSourceType.WIKISOURCE_API || book.bookUrl.startsWith("wikisource://")) {
             val chapters = fetchWikisourceChapters(source, book)
             return@withContext book.copy(latestChapter = chapters.lastOrNull()?.title ?: "全本典藏") to chapters
@@ -166,6 +206,10 @@ class NovelSourceEngine {
         val start = System.currentTimeMillis()
         try {
             val probeUrl = when {
+                source.sourceType == NovelSourceType.XIMALAYA_PINGSHU ->
+                    "https://www.ximalaya.com/revision/category/v2/albums?pageNum=1&pageSize=3&sort=1&categoryId=12"
+                source.sourceType == NovelSourceType.KUWO_PINGSHU ->
+                    "http://search.kuwo.cn/r.s?all=%E5%8D%95%E7%94%B0%E8%8A%B3&ft=album&rformat=json&encoding=utf8&rn=3&pn=0"
                 source.sourceType == NovelSourceType.WIKISOURCE_API ->
                     "https://zh.wikisource.org/w/api.php?action=query&meta=siteinfo&format=json"
                 source.sourceType == NovelSourceType.GUTENDEX_API ->
@@ -371,6 +415,347 @@ class NovelSourceEngine {
                 .takeIf { it.startsWith("http") && it != pageUrl }
         } else null
         return text to nextUrl
+    }
+
+    /**
+     * 解析评书单回可播放音频直链（喜马拉雅 M4A CDN / 酷我 MP3 CDN）
+     */
+    suspend fun resolvePingshuAudioUrl(
+        source: NovelSource,
+        episode: NovelChapter
+    ): String = withContext(Dispatchers.IO) {
+        val url = episode.url.trim()
+        if (url.startsWith("http://") || url.startsWith("https://")) return@withContext url
+
+        if (url.startsWith("ximalaya_track://")) {
+            val trackId = url.removePrefix("ximalaya_track://").trim()
+            val raw = executeRequest("https://m.ximalaya.com/tracks/$trackId.json", source)
+            val obj = JSONObject(raw)
+            val audio = obj.optString("play_path_64").ifBlank {
+                obj.optString("play_path").ifBlank { obj.optString("play_path_32") }
+            }.trim()
+            if (audio.startsWith("http")) return@withContext audio
+            throw IllegalStateException("该回音频需 VIP 或暂不可播，可尝试酷我评书源")
+        }
+
+        if (url.startsWith("kuwo_track://")) {
+            val rid = url.removePrefix("kuwo_track://").trim()
+            val direct = executeRequest(
+                "http://antiserver.kuwo.cn/anti.s?type=convert_url&rid=MUSIC_$rid&format=mp3&response=url",
+                source
+            ).trim()
+            if (direct.startsWith("http")) return@withContext direct
+            throw IllegalStateException("酷我评书音频直链获取失败")
+        }
+
+        throw IllegalStateException("不支持的评书音频协议：$url")
+    }
+
+    // ==================== 喜马拉雅评书音频源适配器 ====================
+
+    private fun fetchXimalayaPingshuExplore(source: NovelSource, categoryUrl: String, page: Int): List<NovelBook> {
+        val curated = listOf(
+            NovelBook(
+                id = "xm_2677356", sourceId = source.id, sourceName = source.name,
+                title = "白眉大侠（单田芳经典全本）", author = "单田芳",
+                coverUrl = "https://imagev2.xmcdn.com/storages/f962-audiofreehighqps/D3/57/GMCoOSUFh1yoAAICLwEAQjMm.png",
+                intro = "单田芳最具代表性的侠义武侠评书，白眉大侠徐良与开封府群雄斗智斗勇（全401回免费直连）。",
+                kind = "武侠公案", latestChapter = "全 401 回", bookUrl = "ximalaya_album://2677356", tocUrl = "ximalaya_album://2677356"
+            ),
+            NovelBook(
+                id = "xm_3820", sourceId = source.id, sourceName = source.name,
+                title = "乱世枭雄（单田芳经典全本）", author = "单田芳",
+                coverUrl = "https://imagev2.xmcdn.com/group56/M03/3D/26/wKgLdlx7e5zB0z60AAH9a4f8l18389.jpg",
+                intro = "讲述东北王张作霖跌宕起伏传奇人生的传世评书名作（全485回免费直连）。",
+                kind = "历史演义", latestChapter = "全 485 回", bookUrl = "ximalaya_album://3820", tocUrl = "ximalaya_album://3820"
+            ),
+            NovelBook(
+                id = "xm_9742745", sourceId = source.id, sourceName = source.name,
+                title = "郭德纲单口相声与评书精选", author = "郭德纲",
+                intro = "德云社郭德纲经典单口相声与长篇评书合集，幽默风趣、包袱不断（194回免费直连）。",
+                kind = "单口评书", latestChapter = "共 194 回", bookUrl = "ximalaya_album://9742745", tocUrl = "ximalaya_album://9742745"
+            )
+        )
+
+        val liveAlbums = runCatching {
+            val apiUrl = "https://www.ximalaya.com/revision/category/v2/albums?pageNum=$page&pageSize=24&sort=1&categoryId=12"
+            val xmSource = source.copy(headers = source.headers + ("Referer" to "https://www.ximalaya.com/"))
+            val raw = executeRequest(apiUrl, xmSource)
+            parseXimalayaCategoryAlbums(source, raw)
+        }.getOrDefault(emptyList())
+
+        val combined = if (page == 1) (curated + liveAlbums).distinctBy { it.bookUrl } else liveAlbums
+        return when (categoryUrl) {
+            "xm_cat://shantianfang" -> combined.filter { it.title.contains("单田芳") || it.author.contains("单田芳") }.ifEmpty { curated.take(2) }
+            "xm_cat://history" -> combined.filter {
+                listOf("三国", "隋唐", "水浒", "大明", "枭雄", "岳飞", "杨家将", "历史", "演义", "汉", "唐", "宋", "清").any { k ->
+                    it.title.contains(k) || it.intro.contains(k)
+                }
+            }.ifEmpty { combined }
+            "xm_cat://wuxia" -> combined.filter {
+                listOf("大侠", "三侠", "五义", "剑侠", "童林", "侠", "武", "公案", "包公", "水浒").any { k ->
+                    it.title.contains(k) || it.intro.contains(k)
+                }
+            }.ifEmpty { combined }
+            "xm_cat://guodegang" -> combined.filter {
+                it.title.contains("郭德纲") || it.author.contains("郭德纲") || it.title.contains("相声") || it.title.contains("单口")
+            }.ifEmpty { listOf(curated.last()) + combined.take(6) }
+            else -> combined
+        }
+    }
+
+    internal fun parseXimalayaCategoryAlbums(source: NovelSource, rawJson: String): List<NovelBook> {
+        val arr = JSONObject(rawJson).optJSONObject("data")?.optJSONArray("albums") ?: return emptyList()
+        val list = mutableListOf<NovelBook>()
+        for (i in 0 until arr.length()) {
+            val a = arr.optJSONObject(i) ?: continue
+            if (a.optBoolean("isPaid", false)) continue // 只展示免费可听评书，避免点开受限
+            val albumId = a.optLong("albumId", 0L)
+            val title = a.optString("albumTitle").trim()
+            if (albumId <= 0L || title.isBlank()) continue
+            val rawCover = a.optString("albumCoverPath").trim()
+            val cover = when {
+                rawCover.startsWith("http") -> rawCover
+                rawCover.startsWith("//") -> "https:$rawCover"
+                rawCover.isNotBlank() -> "https://imagev2.xmcdn.com/$rawCover"
+                else -> ""
+            }
+            val count = a.optInt("albumTrackCount", 0)
+            val playCnt = a.optLong("albumPlayCount", 0L)
+            val playStr = if (playCnt >= 100_000_000L) "${String.format("%.1f", playCnt / 100_000_000.0)}亿播放"
+            else if (playCnt >= 10_000L) "${playCnt / 10_000L}万播放" else ""
+            list.add(
+                NovelBook(
+                    id = "xm_$albumId",
+                    sourceId = source.id,
+                    sourceName = source.name,
+                    title = title,
+                    author = a.optString("albumUserNickName").ifBlank { "评书名家" },
+                    coverUrl = cover,
+                    intro = listOfNotNull(
+                        if (count > 0) "全 $count 回免费评书" else null,
+                        playStr.takeIf { it.isNotBlank() }
+                    ).joinToString(" · "),
+                    kind = "免费评书",
+                    latestChapter = if (count > 0) "共 $count 回" else "更新中",
+                    bookUrl = "ximalaya_album://$albumId",
+                    tocUrl = "ximalaya_album://$albumId"
+                )
+            )
+        }
+        return list
+    }
+
+    private fun searchXimalayaPingshu(source: NovelSource, keyword: String): List<NovelBook> {
+        val page1 = fetchXimalayaPingshuExplore(source, "xm_cat://hot", 1)
+        val page2 = runCatching { fetchXimalayaPingshuExplore(source, "xm_cat://hot", 2) }.getOrDefault(emptyList())
+        return (page1 + page2).distinctBy { it.bookUrl }.filter {
+            it.title.contains(keyword, ignoreCase = true) || it.author.contains(keyword, ignoreCase = true)
+        }
+    }
+
+    private fun fetchXimalayaPingshuEpisodes(source: NovelSource, book: NovelBook): List<NovelChapter> {
+        val albumId = book.bookUrl.removePrefix("ximalaya_album://").trim()
+        val episodes = mutableListOf<NovelChapter>()
+        // Load up to 2 pages (200 episodes) smoothly in ascending order
+        for (pg in 1..2) {
+            val url = "https://mobile.ximalaya.com/mobile/v1/album/track?albumId=$albumId&pageId=$pg&pageSize=100&isAsc=true"
+            val raw = runCatching { executeRequest(url, source) }.getOrNull() ?: break
+            val dataObj = JSONObject(raw).optJSONObject("data") ?: break
+            val arr = dataObj.optJSONArray("list") ?: break
+            if (arr.length() == 0) break
+            for (i in 0 until arr.length()) {
+                val t = arr.optJSONObject(i) ?: continue
+                val tid = t.optLong("trackId", 0L)
+                val title = t.optString("title").trim()
+                if (tid <= 0L || title.isBlank()) continue
+                episodes.add(
+                    NovelChapter(
+                        index = episodes.size,
+                        title = title,
+                        url = "ximalaya_track://$tid"
+                    )
+                )
+            }
+            val maxPage = dataObj.optInt("maxPageId", 1)
+            if (pg >= maxPage) break
+        }
+        return episodes
+    }
+
+    // ==================== 酷我评书名家音频源适配器 ====================
+
+    private fun fetchKuwoPingshuExplore(source: NovelSource, categoryUrl: String, page: Int): List<NovelBook> {
+        val curatedAll = listOf(
+            NovelBook(
+                id = "kw_alb_74399040", sourceId = source.id, sourceName = source.name,
+                title = "隋唐演义（单田芳 · 142回全本）", author = "单田芳",
+                coverUrl = "https://img4.kuwo.cn/star/albumcover/300/s4s50/63/3142603909.jpg",
+                intro = "单田芳经典历史演义评书，瓦岗寨群雄并起、秦琼程咬金与李世民传奇故事。",
+                kind = "单田芳", latestChapter = "全 142 回", bookUrl = "kuwo_album://74399040", tocUrl = "kuwo_album://74399040"
+            ),
+            NovelBook(
+                id = "kw_srch_bmdx", sourceId = source.id, sourceName = source.name,
+                title = "白眉大侠（单田芳评书精选）", author = "单田芳",
+                coverUrl = "https://img4.kuwo.cn/star/albumcover/300/s4s94/75/3044960347.jpg",
+                intro = "单田芳武侠评书巅峰，徐良、房书安、白云瑞闯荡江湖，酷我高速直连秒播。",
+                kind = "单田芳", latestChapter = "精选全集", bookUrl = "kuwo_search://单田芳白眉大侠", tocUrl = "kuwo_search://单田芳白眉大侠"
+            ),
+            NovelBook(
+                id = "kw_alb_46299165", sourceId = source.id, sourceName = source.name,
+                title = "雍正剑侠图（连丽如 · 378回全本）", author = "连丽如",
+                intro = "评书表演艺术家连丽如代表作，侠客童林江湖传奇，全 378 回畅听。",
+                kind = "连丽如", latestChapter = "全 378 回", bookUrl = "kuwo_album://46299165", tocUrl = "kuwo_album://46299165"
+            ),
+            NovelBook(
+                id = "kw_alb_51220830", sourceId = source.id, sourceName = source.name,
+                title = "大唐侠女（刘兰芳 · 62回全本）", author = "刘兰芳",
+                intro = "著名评书大师刘兰芳播讲，隋唐巾帼英雄传奇故事。",
+                kind = "刘兰芳", latestChapter = "全 62 回", bookUrl = "kuwo_album://51220830", tocUrl = "kuwo_album://51220830"
+            ),
+            NovelBook(
+                id = "kw_alb_49740893", sourceId = source.id, sourceName = source.name,
+                title = "契丹萧太后（刘兰芳 · 70回全本）", author = "刘兰芳",
+                intro = "刘兰芳播讲辽代名后萧绰传奇人生，荡气回肠的历史评书。",
+                kind = "刘兰芳", latestChapter = "全 70 回", bookUrl = "kuwo_album://49740893", tocUrl = "kuwo_album://49740893"
+            ),
+            NovelBook(
+                id = "kw_alb_12961316", sourceId = source.id, sourceName = source.name,
+                title = "康熙私访（连丽如 · 42回全本）", author = "连丽如",
+                intro = "连丽如经典公案评书，康熙微服私访惩奸除恶。",
+                kind = "连丽如", latestChapter = "全 42 回", bookUrl = "kuwo_album://12961316", tocUrl = "kuwo_album://12961316"
+            ),
+            NovelBook(
+                id = "kw_alb_56364758", sourceId = source.id, sourceName = source.name,
+                title = "红楼梦评书（66回全本）", author = "名家评书",
+                intro = "经典四大名著《红楼梦》评书演绎版，全 66 回直连畅听。",
+                kind = "名著评书", latestChapter = "全 66 回", bookUrl = "kuwo_album://56364758", tocUrl = "kuwo_album://56364758"
+            ),
+            NovelBook(
+                id = "kw_srch_sanguo", sourceId = source.id, sourceName = source.name,
+                title = "三国演义评书（袁阔成/名家版）", author = "袁阔成等",
+                intro = "滚滚长江东逝水，群雄逐鹿经典《三国演义》有声评书精选。",
+                kind = "名著评书", latestChapter = "精选回次", bookUrl = "kuwo_search://袁阔成三国演义", tocUrl = "kuwo_search://袁阔成三国演义"
+            ),
+            NovelBook(
+                id = "kw_srch_gdg", sourceId = source.id, sourceName = source.name,
+                title = "济公传（郭德纲长篇评书）", author = "郭德纲",
+                intro = "郭德纲剧场经典长篇评书《济公传》，爆笑幽默与江湖故事并重。",
+                kind = "郭德纲", latestChapter = "精选全集", bookUrl = "kuwo_search://郭德纲济公传", tocUrl = "kuwo_search://郭德纲济公传"
+            ),
+            NovelBook(
+                id = "kw_alb_54549089", sourceId = source.id, sourceName = source.name,
+                title = "九一八风云（单田芳评书）", author = "单田芳",
+                coverUrl = "https://img4.kuwo.cn/star/albumcover/300/s3s22/69/928406337.jpg",
+                intro = "单田芳播讲近代抗战风云历史长篇评书。",
+                kind = "单田芳", latestChapter = "全集直连", bookUrl = "kuwo_album://54549089", tocUrl = "kuwo_album://54549089"
+            )
+        )
+
+        if (page > 1) return emptyList()
+        return when (categoryUrl) {
+            "kw_cat://shantianfang" -> curatedAll.filter { it.kind == "单田芳" } + searchKuwoPingshuAlbums(source, "单田芳")
+            "kw_cat://masters" -> curatedAll.filter { it.kind == "连丽如" || it.kind == "刘兰芳" }
+            "kw_cat://classics" -> curatedAll.filter { it.kind == "名著评书" || it.title.contains("隋唐") }
+            "kw_cat://guodegang" -> curatedAll.filter { it.kind == "郭德纲" } + searchKuwoPingshuAlbums(source, "郭德纲评书")
+            else -> curatedAll
+        }.distinctBy { it.bookUrl }
+    }
+
+    private fun searchKuwoPingshu(source: NovelSource, keyword: String): List<NovelBook> {
+        val albums = searchKuwoPingshuAlbums(source, keyword)
+        val directCollection = NovelBook(
+            id = "kw_srch_${keyword.hashCode()}",
+            sourceId = source.id,
+            sourceName = source.name,
+            title = "「$keyword」酷我评书全集直连",
+            author = "酷我评书检索",
+            intro = "实时聚合酷我音频库中与「$keyword」相关的评书分回音频，点击立即连续收听。",
+            kind = "实时检索",
+            latestChapter = "直连秒播",
+            bookUrl = "kuwo_search://$keyword",
+            tocUrl = "kuwo_search://$keyword"
+        )
+        return (listOf(directCollection) + albums).distinctBy { it.bookUrl }
+    }
+
+    private fun searchKuwoPingshuAlbums(source: NovelSource, keyword: String): List<NovelBook> {
+        return runCatching {
+            val enc = URLEncoder.encode(keyword, "UTF-8")
+            val raw = executeRequest(
+                "http://search.kuwo.cn/r.s?all=$enc&ft=album&rformat=json&encoding=utf8&rn=12&pn=0",
+                source
+            ).trim()
+            val arr = JSONObject(raw).optJSONArray("albumlist") ?: return emptyList()
+            val list = mutableListOf<NovelBook>()
+            for (i in 0 until arr.length()) {
+                val a = arr.optJSONObject(i) ?: continue
+                val aid = a.optString("albumid").trim()
+                val title = a.optString("name").replace("&nbsp;", " ").trim()
+                if (aid.isBlank() || title.isBlank()) continue
+                val pic = a.optString("pic").trim().let {
+                    when {
+                        it.startsWith("http") -> it
+                        it.isNotBlank() -> "https://img4.kuwo.cn/star/albumcover/$it"
+                        else -> ""
+                    }
+                }
+                list.add(
+                    NovelBook(
+                        id = "kw_alb_$aid",
+                        sourceId = source.id,
+                        sourceName = source.name,
+                        title = title,
+                        author = a.optString("artist").replace("&nbsp;", " ").ifBlank { "评书名家" },
+                        coverUrl = pic,
+                        intro = a.optString("info").replace("&nbsp;", " ").ifBlank { "酷我官方评书专辑，MP3 直连畅听。" },
+                        kind = "酷我评书",
+                        latestChapter = "专辑全集",
+                        bookUrl = "kuwo_album://$aid",
+                        tocUrl = "kuwo_album://$aid"
+                    )
+                )
+            }
+            list
+        }.getOrDefault(emptyList())
+    }
+
+    private fun fetchKuwoPingshuEpisodes(source: NovelSource, book: NovelBook): List<NovelChapter> {
+        if (book.bookUrl.startsWith("kuwo_album://")) {
+            val aid = book.bookUrl.removePrefix("kuwo_album://").trim()
+            val url = "http://search.kuwo.cn/r.s?stype=albuminfo&albumid=$aid&show_copyright_off=1&alflac=1&vipver=1&mobi=1&rn=150&pn=0"
+            val raw = executeRequest(url, source).trim()
+            val arr = JSONObject(raw).optJSONArray("musiclist") ?: return emptyList()
+            val eps = mutableListOf<NovelChapter>()
+            for (i in 0 until arr.length()) {
+                val m = arr.optJSONObject(i) ?: continue
+                val id = m.optString("id").ifBlank { m.optString("musicrid") }.trim()
+                val title = m.optString("name").ifBlank { m.optString("songname") }.replace("&nbsp;", " ").trim()
+                if (id.isBlank() || title.isBlank()) continue
+                eps.add(NovelChapter(index = eps.size, title = title, url = "kuwo_track://$id"))
+            }
+            return eps.sortedBy { extractChapterOrderNumber(it.title) }
+                .mapIndexed { idx, ch -> ch.copy(index = idx) }
+        }
+
+        // Direct kuwo_search:// episode list
+        val kw = book.bookUrl.removePrefix("kuwo_search://").trim()
+        val enc = URLEncoder.encode(kw, "UTF-8")
+        val raw = executeRequest(
+            "http://search.kuwo.cn/r.s?all=$enc&ft=music&rformat=json&encoding=utf8&rn=80&pn=0",
+            source
+        ).trim()
+        val arr = JSONObject(raw).optJSONArray("abslist") ?: return emptyList()
+        val eps = mutableListOf<NovelChapter>()
+        for (i in 0 until arr.length()) {
+            val m = arr.optJSONObject(i) ?: continue
+            val id = m.optString("DC_TARGETID").ifBlank { m.optString("MUSICRID").removePrefix("MUSIC_") }.trim()
+            val title = m.optString("NAME").ifBlank { m.optString("SONGNAME") }.replace("&nbsp;", " ").trim()
+            if (id.isBlank() || title.isBlank()) continue
+            eps.add(NovelChapter(index = eps.size, title = title, url = "kuwo_track://$id"))
+        }
+        return eps.sortedBy { extractChapterOrderNumber(it.title) }
+            .mapIndexed { idx, ch -> ch.copy(index = idx) }
     }
 
     // ==================== 中文维基文库 (Wikisource) 名著典藏适配器 ====================

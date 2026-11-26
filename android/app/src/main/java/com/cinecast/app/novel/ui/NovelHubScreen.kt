@@ -47,24 +47,31 @@ import com.cinecast.app.novel.viewmodel.NovelViewModel
 private enum class NovelSubTab(val label: String) {
     BOOKSHELF("书架"),
     DISCOVER("书城"),
+    PINGSHU("听评书"),
     SOURCES("书源")
 }
 
 /**
- * Google Play Books 风格独立阅读中心
- * 内含 书架 | 书城发现与全源搜索 | 独立书源管理（支持 GitHub Legado 书源订阅导入）
+ * Google Play Books 风格独立阅读与听评书中心
+ * 内含 书架 | 书城发现 | 听评书（喜马拉雅/酷我评书源） | 独立书源管理
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NovelHubScreen(
     viewModel: NovelViewModel,
-    onOpenReader: () -> Unit
+    onOpenReader: () -> Unit,
+    onOpenPingshuPlayer: () -> Unit = {}
 ) {
     val sources by viewModel.sources.collectAsState()
     val activeSourceId by viewModel.activeSourceId.collectAsState()
+    val activePingshuSourceId by viewModel.activePingshuSourceId.collectAsState()
     val subscriptions by viewModel.subscriptions.collectAsState()
     val bookshelf by viewModel.bookshelf.collectAsState()
+    val pingshuHistory by viewModel.pingshuHistory.collectAsState()
     val exploreState by viewModel.exploreState.collectAsState()
+    val pingshuBrowseState by viewModel.pingshuBrowseState.collectAsState()
+    val pingshuPlayerState by viewModel.pingshuPlayerState.collectAsState()
+    val pingshuPlaybackState by viewModel.pingshuPlaybackState.collectAsState()
     val searchState by viewModel.searchState.collectAsState()
     val detailState by viewModel.detailState.collectAsState()
     val isImporting by viewModel.isImporting.collectAsState()
@@ -78,9 +85,11 @@ fun NovelHubScreen(
     val focusManager = LocalFocusManager.current
     val searchFocusRequester = remember { FocusRequester() }
 
+    val enabledTextSources = remember(sources) { sources.filter { it.enabled && !it.sourceType.isAudioPingshu } }
+    val enabledPingshuSources = remember(sources) { sources.filter { it.enabled && it.sourceType.isAudioPingshu } }
     val enabledSources = remember(sources) { sources.filter { it.enabled } }
-    val activeSource = remember(sources, activeSourceId) {
-        sources.firstOrNull { it.id == activeSourceId } ?: enabledSources.firstOrNull()
+    val activeSource = remember(sources, activeSourceId, enabledTextSources) {
+        sources.firstOrNull { it.id == activeSourceId && !it.sourceType.isAudioPingshu } ?: enabledTextSources.firstOrNull()
     }
 
     LaunchedEffect(isSearchMode) {
@@ -259,6 +268,7 @@ fun NovelHubScreen(
                                     NovelSubTab.BOOKSHELF -> if (bookshelf.isNotEmpty()) " ${bookshelf.size}" else ""
                                     NovelSubTab.SOURCES -> " ${enabledSources.size}"
                                     NovelSubTab.DISCOVER -> ""
+                                    NovelSubTab.PINGSHU -> ""
                                 }
                                 Surface(
                                     onClick = { currentSubTab = tab },
@@ -267,7 +277,7 @@ fun NovelHubScreen(
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 6.dp),
+                                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
                                         horizontalArrangement = Arrangement.Center,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -275,16 +285,17 @@ fun NovelHubScreen(
                                             imageVector = when (tab) {
                                                 NovelSubTab.BOOKSHELF -> Icons.Rounded.Bookmarks
                                                 NovelSubTab.DISCOVER -> Icons.Rounded.AutoStories
+                                                NovelSubTab.PINGSHU -> Icons.Rounded.Headphones
                                                 NovelSubTab.SOURCES -> Icons.AutoMirrored.Rounded.LibraryBooks
                                             },
                                             contentDescription = null,
                                             tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(16.dp)
+                                            modifier = Modifier.size(15.dp)
                                         )
-                                        Spacer(Modifier.width(5.dp))
+                                        Spacer(Modifier.width(3.dp))
                                         Text(
                                             tab.label + badge,
-                                            style = MaterialTheme.typography.labelLarge,
+                                            style = MaterialTheme.typography.labelMedium,
                                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                             color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1
@@ -298,48 +309,125 @@ fun NovelHubScreen(
             }
         }
 
-        // Main Content Body
-        if (isSearchMode) {
-            NovelSearchResultsPane(
-                searchState = searchState,
-                onBookClick = { viewModel.openBookDetail(it) },
-                onQuickRead = {
-                    viewModel.openReaderFromBook(it)
-                    onOpenReader()
-                }
-            )
-        } else {
-            when (currentSubTab) {
-                NovelSubTab.BOOKSHELF -> NovelBookshelfPane(
-                    bookshelf = bookshelf,
-                    onContinueRead = {
-                        viewModel.openReaderFromShelf(it)
+        // Main Content Body + Floating Pingshu Mini Bar
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (isSearchMode) {
+                NovelSearchResultsPane(
+                    searchState = searchState,
+                    onBookClick = { viewModel.openBookDetail(it) },
+                    onQuickRead = {
+                        viewModel.openReaderFromBook(it)
                         onOpenReader()
-                    },
-                    onRemove = { viewModel.removeFromBookshelf(it.bookKey) },
-                    onGoDiscover = { currentSubTab = NovelSubTab.DISCOVER },
-                    onGoSearch = { isSearchMode = true }
+                    }
                 )
+            } else {
+                when (currentSubTab) {
+                    NovelSubTab.BOOKSHELF -> NovelBookshelfPane(
+                        bookshelf = bookshelf,
+                        onContinueRead = {
+                            viewModel.openReaderFromShelf(it)
+                            onOpenReader()
+                        },
+                        onRemove = { viewModel.removeFromBookshelf(it.bookKey) },
+                        onGoDiscover = { currentSubTab = NovelSubTab.DISCOVER },
+                        onGoSearch = { isSearchMode = true }
+                    )
 
-                NovelSubTab.DISCOVER -> NovelDiscoverPane(
-                    exploreState = exploreState,
-                    onSelectCategory = { viewModel.selectExploreCategory(it) },
-                    onRefresh = { viewModel.loadExplore(reset = true) },
-                    onLoadMore = { viewModel.loadExplore(reset = false) },
-                    onBookClick = { viewModel.openBookDetail(it) }
-                )
+                    NovelSubTab.DISCOVER -> NovelDiscoverPane(
+                        exploreState = exploreState,
+                        onSelectCategory = { viewModel.selectExploreCategory(it) },
+                        onRefresh = { viewModel.loadExplore(reset = true) },
+                        onLoadMore = { viewModel.loadExplore(reset = false) },
+                        onBookClick = { viewModel.openBookDetail(it) }
+                    )
 
-                NovelSubTab.SOURCES -> NovelSourcesPane(
-                    sources = sources,
-                    subscriptions = subscriptions,
-                    isImporting = isImporting,
-                    viewModel = viewModel
-                )
+                    NovelSubTab.PINGSHU -> NovelPingshuPane(
+                        browseState = pingshuBrowseState,
+                        pingshuSources = enabledPingshuSources,
+                        activePingshuSourceId = activePingshuSourceId,
+                        history = pingshuHistory,
+                        onSelectPingshuSource = { viewModel.selectPingshuSource(it) },
+                        onSelectCategory = { viewModel.selectPingshuCategory(it) },
+                        onQueryChange = { viewModel.updatePingshuSearchQuery(it) },
+                        onSearch = { viewModel.searchPingshu(it) },
+                        onRefresh = { viewModel.loadPingshuExplore(reset = true) },
+                        onOpenAlbum = { album ->
+                            viewModel.openPingshuAlbum(album)
+                            onOpenPingshuPlayer()
+                        },
+                        onResumeHistory = { h ->
+                            viewModel.openPingshuFromHistory(h)
+                            onOpenPingshuPlayer()
+                        }
+                    )
+
+                    NovelSubTab.SOURCES -> NovelSourcesPane(
+                        sources = sources,
+                        subscriptions = subscriptions,
+                        isImporting = isImporting,
+                        viewModel = viewModel
+                    )
+                }
+            }
+
+            // Floating Mini Pingshu Player Bar
+            pingshuPlayerState.album?.let { activeAlbum ->
+                val curEp = pingshuPlayerState.episodes.getOrNull(pingshuPlayerState.currentEpisodeIndex)
+                Surface(
+                    onClick = onOpenPingshuPlayer,
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    shadowElevation = 6.dp,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Rounded.Headphones,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                activeAlbum.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                curEp?.title ?: "正在加载回次...",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        IconButton(onClick = { viewModel.togglePingshuPlayPause() }) {
+                            Icon(
+                                if (pingshuPlaybackState.isPlaying) Icons.Rounded.PauseCircle else Icons.Rounded.PlayCircle,
+                                contentDescription = "播放/暂停",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+                        IconButton(onClick = { viewModel.nextPingshuEpisode() }) {
+                            Icon(Icons.Rounded.SkipNext, contentDescription = "下一回")
+                        }
+                    }
+                }
             }
         }
     }
 
-    // Active Book Source Picker Sheet
+    // Active Book Source Picker Sheet (Text Book Sources only)
     if (showSourcePicker) {
         ModalBottomSheet(onDismissRequest = { showSourcePicker = false }) {
             Column(
@@ -359,7 +447,7 @@ fun NovelHubScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.heightIn(max = 380.dp)
                 ) {
-                    items(enabledSources, key = { it.id }) { src ->
+                    items(enabledTextSources, key = { it.id }) { src ->
                         val selected = src.id == activeSource?.id
                         Surface(
                             onClick = {
@@ -903,6 +991,263 @@ private fun NovelSearchResultsPane(
     }
 }
 
+// ==================== 3.5 听评书视图（喜马拉雅 / 酷我评书名家音频直连） ====================
+
+@Composable
+private fun NovelPingshuPane(
+    browseState: com.cinecast.app.novel.viewmodel.PingshuBrowseUiState,
+    pingshuSources: List<NovelSource>,
+    activePingshuSourceId: String,
+    history: List<PingshuHistoryItem>,
+    onSelectPingshuSource: (String) -> Unit,
+    onSelectCategory: (Int) -> Unit,
+    onQueryChange: (String) -> Unit,
+    onSearch: (String) -> Unit,
+    onRefresh: () -> Unit,
+    onOpenAlbum: (NovelBook) -> Unit,
+    onResumeHistory: (PingshuHistoryItem) -> Unit
+) {
+    val focusManager = LocalFocusManager.current
+    LazyColumn(
+        contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 92.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        // Pingshu Search Bar + Master Quick Tags
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.Headphones, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        TextField(
+                            value = browseState.searchQuery,
+                            onValueChange = onQueryChange,
+                            placeholder = { Text("搜单田芳、白眉大侠、三国演义、郭德纲...", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            singleLine = true,
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent
+                            ),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = {
+                                focusManager.clearFocus()
+                                onSearch(browseState.searchQuery)
+                            }),
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (browseState.searchQuery.isNotEmpty()) {
+                            IconButton(onClick = {
+                                onQueryChange("")
+                                onRefresh()
+                            }) {
+                                Icon(Icons.Rounded.Close, contentDescription = "清空", modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        FilledTonalButton(
+                            onClick = {
+                                focusManager.clearFocus()
+                                onSearch(browseState.searchQuery)
+                            },
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) { Text("搜评书") }
+                    }
+                }
+
+                // Pingshu Audio Source Selector Chips
+                if (pingshuSources.isNotEmpty()) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(pingshuSources, key = { it.id }) { src ->
+                            val sel = src.id == activePingshuSourceId || (activePingshuSourceId.isBlank() && src == pingshuSources.first())
+                            FilterChip(
+                                selected = sel,
+                                onClick = { onSelectPingshuSource(src.id) },
+                                label = { Text(src.name.substringBefore(" ")) },
+                                leadingIcon = { Icon(Icons.Rounded.Radio, contentDescription = null, modifier = Modifier.size(15.dp)) }
+                            )
+                        }
+                        items(listOf("单田芳", "袁阔成", "刘兰芳", "连丽如", "郭德纲")) { master ->
+                            SuggestionChip(
+                                onClick = { onSearch(master) },
+                                label = { Text(master) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Recent Pingshu Listening History (Resume where left off)
+        if (history.isNotEmpty() && browseState.searchQuery.isBlank()) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("继续听评书", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(history.take(8), key = { it.bookKey }) { h ->
+                            Card(
+                                onClick = { onResumeHistory(h) },
+                                shape = RoundedCornerShape(18.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f)),
+                                modifier = Modifier.width(220.dp)
+                            ) {
+                                Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    NovelCoverArt(
+                                        title = h.title,
+                                        coverUrl = h.coverUrl,
+                                        modifier = Modifier.width(46.dp).height(62.dp)
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(h.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(h.episodeTitle.ifBlank { "第 ${h.episodeIndex + 1} 回" }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text("断点续听 · 第 ${h.episodeIndex + 1} 回", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pingshu Categories
+        if (browseState.categories.isNotEmpty() && browseState.searchQuery.isBlank()) {
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    itemsIndexed(browseState.categories) { idx, cat ->
+                        val sel = browseState.selectedCategoryIndex == idx
+                        Surface(
+                            onClick = { onSelectCategory(idx) },
+                            shape = RoundedCornerShape(20.dp),
+                            color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerLow
+                        ) {
+                            Text(
+                                cat.title,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Medium,
+                                color = if (sel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        when {
+            browseState.isLoading && browseState.albums.isEmpty() -> {
+                item {
+                    Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            Spacer(Modifier.height(8.dp))
+                            Text("正在加载精选评书...", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+            browseState.error != null && browseState.albums.isEmpty() -> {
+                item {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.fillMaxWidth().padding(24.dp)
+                    ) {
+                        Text(browseState.error, style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.height(10.dp))
+                        FilledTonalButton(onClick = onRefresh) { Text("重新加载") }
+                    }
+                }
+            }
+            else -> {
+                items(browseState.albums, key = { "ps_${it.sourceId}::${it.bookUrl}" }) { album ->
+                    Card(
+                        onClick = { onOpenAlbum(album) },
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            NovelCoverArt(
+                                title = album.title,
+                                coverUrl = album.coverUrl,
+                                modifier = Modifier.width(64.dp).height(86.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        album.title,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    AssistChipBadge(album.kind.ifBlank { "评书" })
+                                }
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    listOfNotNull(
+                                        album.author.takeIf { it.isNotBlank() }?.let { "播讲：$it" },
+                                        album.latestChapter.takeIf { it.isNotBlank() }
+                                    ).joinToString(" · "),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1
+                                )
+                                if (album.intro.isNotBlank()) {
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        album.intro,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(Modifier.height(6.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        album.sourceName.substringBefore(" "),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    FilledTonalButton(
+                                        onClick = { onOpenAlbum(album) },
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(3.dp))
+                                        Text("听评书", style = MaterialTheme.typography.labelMedium)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ==================== 4. 独立小说书源管理视图（GitHub 书源订阅导入） ====================
 
 @Composable
@@ -922,9 +1267,10 @@ private fun NovelSourcesPane(
 
     val filtered = remember(sources, filterTab) {
         when (filterTab) {
-            1 -> sources.filter { it.sourceType != NovelSourceType.LEGADO_HTML }
-            2 -> sources.filter { it.sourceType == NovelSourceType.LEGADO_HTML }
-            3 -> sources.filter { it.enabled }
+            1 -> sources.filter { !it.sourceType.isAudioPingshu && it.sourceType != NovelSourceType.LEGADO_HTML }
+            2 -> sources.filter { it.sourceType.isAudioPingshu }
+            3 -> sources.filter { it.sourceType == NovelSourceType.LEGADO_HTML }
+            4 -> sources.filter { it.enabled }
             else -> sources
         }
     }
@@ -1050,7 +1396,8 @@ private fun NovelSourcesPane(
         item {
             val labels = listOf(
                 "全部 (${sources.size})",
-                "API/名著 (${sources.count { it.sourceType != NovelSourceType.LEGADO_HTML }})",
+                "名著/API (${sources.count { !it.sourceType.isAudioPingshu && it.sourceType != NovelSourceType.LEGADO_HTML }})",
+                "评书源 (${sources.count { it.sourceType.isAudioPingshu }})",
                 "规则源 (${sources.count { it.sourceType == NovelSourceType.LEGADO_HTML }})",
                 "已启用 (${sources.count { it.enabled }})"
             )

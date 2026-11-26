@@ -8,8 +8,14 @@ enum NovelSourceType: String, Codable, CaseIterable, Identifiable {
     case GUTENDEX_API
     case LEGADO_JSON
     case LEGADO_HTML
+    case XIMALAYA_PINGSHU
+    case KUWO_PINGSHU
 
     var id: String { rawValue }
+
+    var isAudioPingshu: Bool {
+        self == .XIMALAYA_PINGSHU || self == .KUWO_PINGSHU
+    }
 
     var badge: String {
         switch self {
@@ -17,6 +23,7 @@ enum NovelSourceType: String, Codable, CaseIterable, Identifiable {
         case .GUTENDEX_API: return "名著"
         case .LEGADO_JSON: return "API"
         case .LEGADO_HTML: return "规则"
+        case .XIMALAYA_PINGSHU, .KUWO_PINGSHU: return "评书"
         }
     }
 }

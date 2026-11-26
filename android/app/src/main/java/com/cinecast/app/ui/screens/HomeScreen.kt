@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.cinecast.app.data.engine.VodSourceEngine
 import com.cinecast.app.data.model.SourceType
 import com.cinecast.app.data.model.VideoSource
 import com.cinecast.app.data.model.VodCategory
@@ -314,60 +315,133 @@ fun HomeScreen(
                             }
                         }
 
-                        // Row 2: Clean Primary Categories + Pinned Right "全部分类与筛选" Trigger
-                        if (homeState.categories.isNotEmpty()) {
-                            Spacer(Modifier.height(6.dp))
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 14.dp, end = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                        // Row 2: Clean Primary Categories + 「阳阳专区」 (Pure English Cartoons) + Filter Trigger
+                        Spacer(Modifier.height(6.dp))
+                        val isYangyangSelected = homeState.selectedCategoryId == VodSourceEngine.YANGYANG_CATEGORY_ID
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 14.dp, end = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
-                                LazyRow(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    item {
-                                        PrimaryCategoryPill(
-                                            label = "推荐",
-                                            selected = homeState.selectedCategoryId == null,
-                                            onClick = {
-                                                selectedYearFilter = "全部"
-                                                viewModel.selectCategory(null)
-                                            }
-                                        )
-                                    }
-                                    items(topCategories, key = { it.id }) { cat ->
-                                        val isSelected = homeState.selectedCategoryId == cat.id || activeParentId == cat.id
-                                        PrimaryCategoryPill(
-                                            label = cat.name,
-                                            selected = isSelected,
-                                            onClick = {
-                                                selectedYearFilter = "全部"
-                                                viewModel.selectCategory(cat.id)
-                                            }
-                                        )
+                                item {
+                                    PrimaryCategoryPill(
+                                        label = "推荐",
+                                        selected = homeState.selectedCategoryId == null,
+                                        onClick = {
+                                            selectedYearFilter = "全部"
+                                            viewModel.selectCategory(null)
+                                        }
+                                    )
+                                }
+                                item {
+                                    Surface(
+                                        onClick = {
+                                            selectedYearFilter = "全部"
+                                            viewModel.selectCategory(VodSourceEngine.YANGYANG_CATEGORY_ID)
+                                        },
+                                        shape = RoundedCornerShape(20.dp),
+                                        color = if (isYangyangSelected) Color(0xFF188038) else Color(0xFFE6F4EA)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.AutoAwesome,
+                                                contentDescription = null,
+                                                tint = if (isYangyangSelected) Color.White else Color(0xFF137333),
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                            Text(
+                                                text = "阳阳专区",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isYangyangSelected) Color.White else Color(0xFF137333)
+                                            )
+                                        }
                                     }
                                 }
-
-                                // Pinned Filter & Full Category Drawer Trigger
-                                IconButton(onClick = { showCategorySheet = true }) {
-                                    BadgedBox(
-                                        badge = {
-                                            if (hasExtraFilter) {
-                                                Badge(containerColor = MaterialTheme.colorScheme.primary)
-                                            }
+                                items(topCategories, key = { it.id }) { cat ->
+                                    val isSelected = homeState.selectedCategoryId == cat.id || activeParentId == cat.id
+                                    PrimaryCategoryPill(
+                                        label = cat.name,
+                                        selected = isSelected,
+                                        onClick = {
+                                            selectedYearFilter = "全部"
+                                            viewModel.selectCategory(cat.id)
                                         }
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Tune,
-                                            contentDescription = "全部分类与筛选",
-                                            tint = if (hasExtraFilter) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
+                                    )
                                 }
                             }
 
+                            // Pinned Filter & Full Category Drawer Trigger
+                            IconButton(onClick = { showCategorySheet = true }) {
+                                BadgedBox(
+                                    badge = {
+                                        if (hasExtraFilter) {
+                                            Badge(containerColor = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Tune,
+                                        contentDescription = "全部分类与筛选",
+                                        tint = if (hasExtraFilter) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+
+                        // Row 3 (Animated): Sub-Categories Row for Yangyang Zone OR active parent category
+                        AnimatedVisibility(
+                            visible = isYangyangSelected,
+                            enter = expandVertically() + fadeIn(),
+                            exit = shrinkVertically() + fadeOut()
+                        ) {
+                            val yangFilters = listOf("全部", "少儿启蒙", "动画电影", "欧美英语动漫")
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                items(yangFilters) { f ->
+                                    SubCategoryChip(
+                                        label = if (f == "全部") "全部英文动画" else f,
+                                        selected = homeState.yangyangSubFilter == f,
+                                        onClick = { viewModel.selectYangyangSubFilter(f) }
+                                    )
+                                }
+                                item {
+                                    SubCategoryChip(
+                                        label = "B站英文动画 ↗",
+                                        selected = false,
+                                        onClick = {
+                                            onOpenWebSniffer(
+                                                "https://m.bilibili.com/search?keyword=%E8%8B%B1%E6%96%87%E5%8A%A8%E7%94%BB%E7%89%87",
+                                                "B站英文动画专区"
+                                            )
+                                        }
+                                    )
+                                }
+                                item {
+                                    SubCategoryChip(
+                                        label = "PBS Kids ↗",
+                                        selected = false,
+                                        onClick = {
+                                            onOpenWebSniffer("https://pbskids.org/video/", "PBS Kids 英语原版动画")
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        if (homeState.categories.isNotEmpty() && !isYangyangSelected) {
                             // Row 3 (Animated): Sub-Categories Row ONLY when a parent category is active
                             AnimatedVisibility(
                                 visible = subCategories.isNotEmpty() && activeParentId != null,
@@ -395,32 +469,32 @@ fun HomeScreen(
                                     }
                                 }
                             }
+                        }
 
-                            // Active Filter Summary Banner if user picked Year / Sort
-                            if (hasExtraFilter) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 2.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (selectedYearFilter != "全部") {
-                                        InputChip(
-                                            selected = true,
-                                            onClick = { selectedYearFilter = "全部" },
-                                            label = { Text("年份：$selectedYearFilter", style = MaterialTheme.typography.labelSmall) },
-                                            trailingIcon = { Icon(Icons.Rounded.Close, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                                        )
-                                    }
-                                    if (sortMode != FeedSortMode.DEFAULT) {
-                                        InputChip(
-                                            selected = true,
-                                            onClick = { sortMode = FeedSortMode.DEFAULT },
-                                            label = { Text("排序：${sortMode.label}", style = MaterialTheme.typography.labelSmall) },
-                                            trailingIcon = { Icon(Icons.Rounded.Close, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                                        )
-                                    }
+                        // Active Filter Summary Banner if user picked Year / Sort
+                        if (hasExtraFilter) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 2.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (selectedYearFilter != "全部") {
+                                    InputChip(
+                                        selected = true,
+                                        onClick = { selectedYearFilter = "全部" },
+                                        label = { Text("年份：$selectedYearFilter", style = MaterialTheme.typography.labelSmall) },
+                                        trailingIcon = { Icon(Icons.Rounded.Close, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                    )
+                                }
+                                if (sortMode != FeedSortMode.DEFAULT) {
+                                    InputChip(
+                                        selected = true,
+                                        onClick = { sortMode = FeedSortMode.DEFAULT },
+                                        label = { Text("排序：${sortMode.label}", style = MaterialTheme.typography.labelSmall) },
+                                        trailingIcon = { Icon(Icons.Rounded.Close, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                    )
                                 }
                             }
                         }
@@ -703,9 +777,45 @@ fun HomeScreen(
                                         }
                                     }
                                 } else {
+                                    if (homeState.selectedCategoryId == VodSourceEngine.YANGYANG_CATEGORY_ID) {
+                                        item(span = { GridItemSpan(3) }) {
+                                            Surface(
+                                                shape = RoundedCornerShape(18.dp),
+                                                color = Color(0xFFE6F4EA),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Icon(
+                                                        Icons.Rounded.AutoAwesome,
+                                                        contentDescription = null,
+                                                        tint = Color(0xFF137333),
+                                                        modifier = Modifier.size(22.dp)
+                                                    )
+                                                    Spacer(Modifier.width(10.dp))
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            "阳阳专区 · 纯英文动画乐园",
+                                                            style = MaterialTheme.typography.titleSmall,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color(0xFF0D652D)
+                                                        )
+                                                        Text(
+                                                            "已严选 ${hotGridItems.size} 部英语原版动画，自动过滤非英语内容",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = Color(0xFF137333)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                     items(hotGridItems, key = { "${it.sourceId}_${it.id}" }) { item ->
                                         VideoPosterCard(
                                             item = item,
+                                            showSourceBadge = homeState.selectedCategoryId == VodSourceEngine.YANGYANG_CATEGORY_ID,
                                             onClick = { onOpenVod(item.sourceId, item.id) }
                                         )
                                     }

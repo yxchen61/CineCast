@@ -31,6 +31,7 @@ class NovelRepository(private val context: Context) {
     private val sourcesFile get() = File(context.filesDir, "cinecast_novel_sources.json")
     private val subsFile get() = File(context.filesDir, "cinecast_novel_subscriptions.json")
     private val bookshelfFile get() = File(context.filesDir, "cinecast_novel_bookshelf.json")
+    private val pingshuHistoryFile get() = File(context.filesDir, "cinecast_pingshu_history.json")
     private val settingsFile get() = File(context.filesDir, "cinecast_novel_reading_settings.json")
 
     private val _sources = MutableStateFlow<List<NovelSource>>(emptyList())
@@ -39,11 +40,17 @@ class NovelRepository(private val context: Context) {
     private val _activeSourceId = MutableStateFlow("")
     val activeSourceId: StateFlow<String> = _activeSourceId.asStateFlow()
 
+    private val _activePingshuSourceId = MutableStateFlow("")
+    val activePingshuSourceId: StateFlow<String> = _activePingshuSourceId.asStateFlow()
+
     private val _subscriptions = MutableStateFlow<List<NovelSubscription>>(emptyList())
     val subscriptions: StateFlow<List<NovelSubscription>> = _subscriptions.asStateFlow()
 
     private val _bookshelf = MutableStateFlow<List<BookshelfItem>>(emptyList())
     val bookshelf: StateFlow<List<BookshelfItem>> = _bookshelf.asStateFlow()
+
+    private val _pingshuHistory = MutableStateFlow<List<PingshuHistoryItem>>(emptyList())
+    val pingshuHistory: StateFlow<List<PingshuHistoryItem>> = _pingshuHistory.asStateFlow()
 
     private val _readingSettings = MutableStateFlow(NovelReadingSettings())
     val readingSettings: StateFlow<NovelReadingSettings> = _readingSettings.asStateFlow()
@@ -80,8 +87,10 @@ class NovelRepository(private val context: Context) {
             merged
         }
         _sources.value = loadedSources
-        _activeSourceId.value = loadedSources.firstOrNull { it.enabled }?.id
-            ?: loadedSources.firstOrNull()?.id.orEmpty()
+        _activeSourceId.value = loadedSources.firstOrNull { it.enabled && !it.sourceType.isAudioPingshu }?.id
+            ?: loadedSources.firstOrNull { !it.sourceType.isAudioPingshu }?.id.orEmpty()
+        _activePingshuSourceId.value = loadedSources.firstOrNull { it.enabled && it.sourceType.isAudioPingshu }?.id
+            ?: loadedSources.firstOrNull { it.sourceType.isAudioPingshu }?.id.orEmpty()
 
         val loadedSubs = readJson<List<NovelSubscription>>(subsFile) ?: defaultNovelSubscriptions().also {
             writeJsonSync(subsFile, it)
@@ -89,11 +98,28 @@ class NovelRepository(private val context: Context) {
         _subscriptions.value = loadedSubs
 
         _bookshelf.value = readJson<List<BookshelfItem>>(bookshelfFile) ?: emptyList()
+        _pingshuHistory.value = readJson<List<PingshuHistoryItem>>(pingshuHistoryFile) ?: emptyList()
         _readingSettings.value = readJson<NovelReadingSettings>(settingsFile) ?: NovelReadingSettings()
     }
 
     fun setActiveSource(sourceId: String) {
         _activeSourceId.value = sourceId
+    }
+
+    fun setActivePingshuSource(sourceId: String) {
+        _activePingshuSourceId.value = sourceId
+    }
+
+    fun getPingshuHistory(sourceId: String, bookUrl: String): PingshuHistoryItem? =
+        _pingshuHistory.value.firstOrNull { it.bookKey == "$sourceId::$bookUrl" }
+
+    suspend fun savePingshuProgress(item: PingshuHistoryItem) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val updated = (listOf(item.copy(lastListenedAt = System.currentTimeMillis())) +
+                _pingshuHistory.value.filterNot { it.bookKey == item.bookKey }).take(40)
+            _pingshuHistory.value = updated
+            writeJsonSync(pingshuHistoryFile, updated)
+        }
     }
 
     fun getSourceById(sourceId: String): NovelSource? =
@@ -417,6 +443,26 @@ class NovelRepository(private val context: Context) {
                 ruleContent = NovelRuleContent(
                     content = "$.data.content"
                 )
+            ),
+            // 5. 喜马拉雅评书馆（v1.5.0 新增：免费高音质 M4A 评书直连，单田芳/历史/武侠/单口）
+            NovelSource(
+                id = "open_ximalaya_pingshu",
+                name = "喜马拉雅评书馆 (免费高清音频)",
+                baseUrl = "https://www.ximalaya.com",
+                group = "听评书专区 (音频直连)",
+                sourceType = NovelSourceType.XIMALAYA_PINGSHU,
+                searchUrl = "https://www.ximalaya.com/revision/category/v2/albums",
+                comment = "免费评书音频直连，涵盖单田芳《白眉大侠》《乱世枭雄》、郭德纲单口评书及 3000+ 免费评书专辑。"
+            ),
+            // 6. 酷我评书名家馆（v1.5.0 新增：MP3 直连全库搜评书，单田芳/连丽如/刘兰芳/袁阔成/郭德纲）
+            NovelSource(
+                id = "open_kuwo_pingshu",
+                name = "酷我评书名家馆 (MP3极速直连)",
+                baseUrl = "http://search.kuwo.cn",
+                group = "听评书专区 (音频直连)",
+                sourceType = NovelSourceType.KUWO_PINGSHU,
+                searchUrl = "http://search.kuwo.cn/r.s",
+                comment = "支持全库检索任意评书名家与作品（单田芳隋唐演义142回、连丽如雍正剑侠图378回、刘兰芳大唐侠女等），MP3 直连秒播。"
             ),
             // 以下网页规则源默认关闭（避免部分站点反爬或失效导致点开看不了），用户可在「书源」页按需开启
             NovelSource(

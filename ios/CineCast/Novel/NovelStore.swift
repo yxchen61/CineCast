@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import SwiftUI
 
@@ -39,6 +40,17 @@ final class NovelStore: ObservableObject {
     @Published var isImporting: Bool = false
     @Published var toastMessage: String? = nil
 
+    // 听评书状态 (AVPlayer)
+    @Published var pingshuAlbums: [NovelBook] = []
+    @Published var isLoadingPingshu: Bool = false
+    @Published var activePingshuAlbum: NovelBook? = nil
+    @Published var pingshuEpisodes: [NovelChapter] = []
+    @Published var currentPingshuIndex: Int = 0
+    @Published var isPingshuPlaying: Bool = false
+    @Published var pingshuSpeed: Float = 1.0
+    private var pingshuPlayer: AVPlayer?
+    private var pingshuEndObserver: NSObjectProtocol?
+
     private var chapterCache: [String: String] = [:]
     private var searchTask: Task<Void, Never>?
     private let encoder: JSONEncoder = {
@@ -54,10 +66,69 @@ final class NovelStore: ObservableObject {
 
     init() {
         loadAll()
-        Task { await loadExplore(reset: true, autoFallback: true) }
+        Task {
+            await loadExplore(reset: true, autoFallback: true)
+            await loadPingshuExplore()
+        }
     }
 
-    var enabledSources: [NovelSource] { sources.filter(\.enabled) }
+    var enabledSources: [NovelSource] { sources.filter { $0.enabled && !$0.sourceType.isAudioPingshu } }
+    var enabledPingshuSources: [NovelSource] { sources.filter { $0.enabled && $0.sourceType.isAudioPingshu } }
+
+    func loadPingshuExplore() async {
+        guard let src = enabledPingshuSources.first,
+              let firstCat = NovelSourceEngine.shared.getExploreCategories(source: src).first else { return }
+        isLoadingPingshu = true
+        pingshuAlbums = (try? await NovelSourceEngine.shared.fetchExplore(source: src, categoryUrl: firstCat.url, page: 1)) ?? []
+        isLoadingPingshu = false
+    }
+
+    func openPingshuAlbum(_ album: NovelBook) async {
+        guard let src = sources.first(where: { $0.id == album.sourceId }) ?? enabledPingshuSources.first else { return }
+        activePingshuAlbum = album
+        if let (_, eps) = try? await NovelSourceEngine.shared.fetchBookDetailAndToc(source: src, book: album), !eps.isEmpty {
+            pingshuEpisodes = eps
+            await playPingshuEpisode(0, source: src)
+        }
+    }
+
+    func playPingshuEpisode(_ index: Int, source: NovelSource? = nil) async {
+        guard index >= 0, index < pingshuEpisodes.count else { return }
+        let src = source ?? sources.first(where: { $0.id == activePingshuAlbum?.sourceId }) ?? enabledPingshuSources.first
+        guard let src else { return }
+        currentPingshuIndex = index
+        guard let stream = try? await NovelSourceEngine.shared.resolvePingshuAudioUrl(source: src, episode: pingshuEpisodes[index]),
+              let url = URL(string: stream) else {
+            showToast("该回音频暂不可播")
+            return
+        }
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        if let obs = pingshuEndObserver { NotificationCenter.default.removeObserver(obs); pingshuEndObserver = nil }
+        let item = AVPlayerItem(url: url)
+        let p = AVPlayer(playerItem: item)
+        pingshuPlayer = p
+        pingshuEndObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.currentPingshuIndex + 1 < self.pingshuEpisodes.count else { return }
+                await self.playPingshuEpisode(self.currentPingshuIndex + 1)
+            }
+        }
+        p.play()
+        p.rate = pingshuSpeed
+        isPingshuPlaying = true
+    }
+
+    func togglePingshuPlayPause() {
+        guard let p = pingshuPlayer else { return }
+        if isPingshuPlaying { p.pause(); isPingshuPlaying = false }
+        else { p.play(); p.rate = pingshuSpeed; isPingshuPlaying = true }
+    }
+
+    func pausePingshuAudio() {
+        pingshuPlayer?.pause()
+        isPingshuPlaying = false
+    }
 
     var activeSource: NovelSource? {
         sources.first { $0.id == activeSourceId } ?? enabledSources.first
@@ -486,6 +557,22 @@ final class NovelStore: ObservableObject {
                 ruleBookInfo: NovelRuleBookInfo(`init`: "$.data", name: "$.title", author: "$.author_name", coverUrl: "$.cover_url", intro: "$.intro", kind: "$.category_name", lastChapter: "$.new_chapter_name", tocUrl: "/novels/api/book/{{$.book_id}}/chapters?pi=1&ps=2000"),
                 ruleToc: NovelRuleToc(chapterList: "$.data", chapterName: "$.chapter_title", chapterUrl: "/novels/api/book/{{$.book_id}}/chapters/{{$.chapter_id}}"),
                 ruleContent: NovelRuleContent(content: "$.data.content")
+            ),
+            NovelSource(
+                id: "open_ximalaya_pingshu",
+                name: "喜马拉雅评书馆 (免费高清音频)",
+                baseUrl: "https://www.ximalaya.com",
+                group: "听评书专区 (音频直连)",
+                sourceType: .XIMALAYA_PINGSHU,
+                searchUrl: "https://www.ximalaya.com/revision/category/v2/albums"
+            ),
+            NovelSource(
+                id: "open_kuwo_pingshu",
+                name: "酷我评书名家馆 (MP3极速直连)",
+                baseUrl: "http://search.kuwo.cn",
+                group: "听评书专区 (音频直连)",
+                sourceType: .KUWO_PINGSHU,
+                searchUrl: "http://search.kuwo.cn/r.s"
             ),
             NovelSource(
                 id: "git_xiu2_sudugu",

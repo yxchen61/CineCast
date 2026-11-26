@@ -21,6 +21,7 @@ import com.cinecast.app.music.ui.MusicPlayerScreen
 import com.cinecast.app.music.viewmodel.MusicViewModel
 import com.cinecast.app.novel.ui.NovelHubScreen
 import com.cinecast.app.novel.ui.NovelReaderScreen
+import com.cinecast.app.novel.ui.PingshuPlayerScreen
 import com.cinecast.app.novel.viewmodel.NovelViewModel
 import com.cinecast.app.ui.components.CastBottomSheet
 import com.cinecast.app.ui.screens.*
@@ -39,6 +40,7 @@ private sealed class ActiveOverlay {
     data object None : ActiveOverlay()
     data object Player : ActiveOverlay()
     data object NovelReader : ActiveOverlay()
+    data object PingshuPlayer : ActiveOverlay()
     data object MusicPlayer : ActiveOverlay()
     data object VideoSources : ActiveOverlay()
     data class WebSniffer(val url: String, val title: String) : ActiveOverlay()
@@ -104,6 +106,12 @@ private fun CineCastRoot(
                     onBack = { overlay = ActiveOverlay.None }
                 )
             }
+            is ActiveOverlay.PingshuPlayer -> {
+                PingshuPlayerScreen(
+                    viewModel = novelViewModel,
+                    onBack = { overlay = ActiveOverlay.None }
+                )
+            }
             is ActiveOverlay.MusicPlayer -> {
                 MusicPlayerScreen(
                     viewModel = musicViewModel,
@@ -127,6 +135,7 @@ private fun CineCastRoot(
                     onBack = { overlay = ActiveOverlay.None },
                     onPlaySniffedUrl = { title, url ->
                         musicViewModel.pauseAudio()
+                        novelViewModel.pausePingshuAudio()
                         viewModel.openDirectStream(title, url, isLive = false)
                         overlay = ActiveOverlay.Player
                     }
@@ -158,6 +167,7 @@ private fun CineCastRoot(
                                 viewModel = viewModel,
                                 onOpenVod = { srcId, vodId ->
                                     musicViewModel.pauseAudio()
+                                    novelViewModel.pausePingshuAudio()
                                     viewModel.openVodDetail(srcId, vodId)
                                     overlay = ActiveOverlay.Player
                                 },
@@ -175,6 +185,7 @@ private fun CineCastRoot(
                                 viewModel = viewModel,
                                 onPlayLiveChannel = { title, urls ->
                                     musicViewModel.pauseAudio()
+                                    novelViewModel.pausePingshuAudio()
                                     viewModel.openDirectStream(title, urls.first(), isLive = true, backupUrls = urls)
                                     overlay = ActiveOverlay.Player
                                 },
@@ -184,7 +195,8 @@ private fun CineCastRoot(
                             )
                             MainTab.NOVEL -> NovelHubScreen(
                                 viewModel = novelViewModel,
-                                onOpenReader = { overlay = ActiveOverlay.NovelReader }
+                                onOpenReader = { overlay = ActiveOverlay.NovelReader },
+                                onOpenPingshuPlayer = { overlay = ActiveOverlay.PingshuPlayer }
                             )
                             MainTab.MUSIC -> MusicHubScreen(
                                 viewModel = musicViewModel,

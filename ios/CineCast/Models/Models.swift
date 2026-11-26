@@ -96,6 +96,7 @@ struct VodItem: Codable, Identifiable, Equatable {
     var remarks: String = ""
     var year: String = ""
     var area: String = ""
+    var lang: String = ""
     var typeName: String = ""
     var sourceId: String = ""
     var sourceName: String = ""

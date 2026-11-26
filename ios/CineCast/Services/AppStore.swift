@@ -99,10 +99,15 @@ final class AppStore: ObservableObject {
 
     func selectCategory(_ id: String?) {
         selectedCategoryId = id
+        feedItems = []
         Task { await loadHomeFeed(reset: true, autoFallback: false) }
     }
 
     func loadHomeFeed(reset: Bool = false, autoFallback: Bool = false) async {
+        if selectedCategoryId == VodSourceEngine.yangyangCategoryId {
+            await loadYangyangEnglishCartoons(reset: reset)
+            return
+        }
         guard let source = activeSource else {
             feedError = "请先在「影视源」页面启用或添加视频源"
             return
@@ -159,6 +164,45 @@ final class AppStore: ObservableObject {
             isLoadingMore = false
             feedError = "加载失败：\(error.localizedDescription)"
         }
+    }
+
+    private func loadYangyangEnglishCartoons(reset: Bool) async {
+        let nextPage = reset ? 1 : feedPage + 1
+        if !reset && (isLoadingMore || feedPage >= feedPageCount) { return }
+        if reset { isLoadingFeed = true; feedError = nil } else { isLoadingMore = true }
+        let preferred = ["dytt_en_cartoon", "guangsu_en_cartoon", "subo_en_cartoon", "jszy_json", "huohu_en_cartoon"]
+        var targets: [VideoSource] = preferred.compactMap { pid in activeApiSources.first { $0.id == pid } }
+        for s in activeApiSources where !targets.contains(where: { $0.id == s.id }) { targets.append(s) }
+        targets = Array(targets.prefix(4))
+
+        var acc = reset ? [VodItem]() : feedItems
+        await withTaskGroup(of: [VodItem].self) { group in
+            for src in targets {
+                group.addTask {
+                    guard let root = try? await VodSourceEngine.shared.fetchVodList(source: src, page: 1) else { return [] }
+                    let cats = root.categories.filter { $0.name.contains("欧美动漫") || $0.name.contains("动画片") }.prefix(2)
+                    var out: [VodItem] = []
+                    for c in cats {
+                        if let res = try? await VodSourceEngine.shared.fetchVodList(source: src, categoryId: c.id, page: nextPage) {
+                            out.append(contentsOf: res.items)
+                        }
+                    }
+                    return out.filter { VodSourceEngine.isStrictEnglishCartoon($0) }
+                }
+            }
+            for await batch in group {
+                if !batch.isEmpty {
+                    acc.append(contentsOf: batch)
+                    var seen = Set<String>()
+                    self.feedItems = acc.filter { seen.insert($0.name.lowercased()).inserted }
+                }
+            }
+        }
+        feedPage = nextPage
+        feedPageCount = max(nextPage + 1, 5)
+        isLoadingFeed = false
+        isLoadingMore = false
+        if feedItems.isEmpty { feedError = "暂未拉取到英文动画片，点击重试" }
     }
 
     // MARK: - Progressive Streaming Multi-Source Search

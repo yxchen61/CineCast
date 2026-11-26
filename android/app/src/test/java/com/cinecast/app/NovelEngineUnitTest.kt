@@ -225,4 +225,53 @@ class NovelEngineUnitTest {
         assertFalse(cleaned.contains("[编辑]"))
         assertFalse(cleaned.contains("[1]"))
     }
+
+    @Test
+    fun testYangyangStrictEnglishCartoonFilterAndXimalayaPingshuParser() {
+        val enCartoon = com.cinecast.app.data.model.VodItem(
+            id = "1", name = "数字积木第五季", lang = "英语", typeName = "欧美动漫", area = "英国"
+        )
+        val cnDubCartoon = com.cinecast.app.data.model.VodItem(
+            id = "2", name = "小猪佩奇第十二季国语", lang = "国语", typeName = "欧美动漫", area = "英国"
+        )
+        val jpAnime = com.cinecast.app.data.model.VodItem(
+            id = "3", name = "名侦探柯南", lang = "日语", typeName = "日本动漫", area = "日本"
+        )
+        val enLiveDrama = com.cinecast.app.data.model.VodItem(
+            id = "4", name = "绝命毒师", lang = "英语", typeName = "欧美剧", area = "美国"
+        )
+        val explicitEnCartoon = com.cinecast.app.data.model.VodItem(
+            id = "5", name = "成龙历险记全季合集（英文版）", lang = "", typeName = "动画片", area = "美国"
+        )
+
+        assertTrue(com.cinecast.app.data.engine.VodSourceEngine.isStrictEnglishCartoon(enCartoon))
+        assertTrue(com.cinecast.app.data.engine.VodSourceEngine.isStrictEnglishCartoon(explicitEnCartoon))
+        assertFalse(com.cinecast.app.data.engine.VodSourceEngine.isStrictEnglishCartoon(cnDubCartoon))
+        assertFalse(com.cinecast.app.data.engine.VodSourceEngine.isStrictEnglishCartoon(jpAnime))
+        assertFalse(com.cinecast.app.data.engine.VodSourceEngine.isStrictEnglishCartoon(enLiveDrama))
+
+        // Verify Ximalaya free pingshu album parser filters out paid albums cleanly
+        val xmJson = """
+        {
+          "ret": 200,
+          "data": {
+            "albums": [
+              {"albumId": 2677356, "albumTitle": "白眉大侠 | 单田芳评书", "albumUserNickName": "单田芳评书", "albumTrackCount": 401, "albumPlayCount": 4010570782, "isPaid": false, "albumCoverPath": "//imagev2.xmcdn.com/test.png"},
+              {"albumId": 15358207, "albumTitle": "付费三国演义", "albumUserNickName": "某主播", "albumTrackCount": 280, "albumPlayCount": 10000, "isPaid": true}
+            ]
+          }
+        }
+        """.trimIndent()
+        val engine = NovelSourceEngine()
+        val src = com.cinecast.app.novel.model.NovelSource(
+            id = "open_ximalaya_pingshu",
+            name = "喜马拉雅评书馆",
+            baseUrl = "https://www.ximalaya.com",
+            sourceType = NovelSourceType.XIMALAYA_PINGSHU
+        )
+        val parsed = engine.parseXimalayaCategoryAlbums(src, xmJson)
+        assertEquals(1, parsed.size)
+        assertEquals("ximalaya_album://2677356", parsed[0].bookUrl)
+        assertEquals("单田芳评书", parsed[0].author)
+    }
 }

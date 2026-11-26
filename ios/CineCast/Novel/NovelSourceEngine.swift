@@ -16,6 +16,20 @@ final class NovelSourceEngine {
     // MARK: - Explore Categories
 
     func getExploreCategories(source: NovelSource) -> [NovelExploreCategory] {
+        if source.sourceType == .XIMALAYA_PINGSHU {
+            return [
+                NovelExploreCategory(title: "热门免费评书", url: "xm_cat://hot"),
+                NovelExploreCategory(title: "单田芳经典", url: "xm_cat://shantianfang"),
+                NovelExploreCategory(title: "历史演义", url: "xm_cat://history")
+            ]
+        }
+        if source.sourceType == .KUWO_PINGSHU {
+            return [
+                NovelExploreCategory(title: "单田芳全集", url: "kw_cat://shantianfang"),
+                NovelExploreCategory(title: "连丽如/刘兰芳", url: "kw_cat://masters"),
+                NovelExploreCategory(title: "郭德纲评书", url: "kw_cat://guodegang")
+            ]
+        }
         if source.sourceType == .WIKISOURCE_API {
             return [
                 NovelExploreCategory(title: "四大名著与演义", url: "ws_cat://sida"),
@@ -61,6 +75,12 @@ final class NovelSourceEngine {
     // MARK: - Explore & Search
 
     func fetchExplore(source: NovelSource, categoryUrl: String, page: Int = 1) async throws -> [NovelBook] {
+        if source.sourceType == .XIMALAYA_PINGSHU {
+            return await fetchXimalayaPingshuExplore(source: source, categoryUrl: categoryUrl, page: page)
+        }
+        if source.sourceType == .KUWO_PINGSHU {
+            return curatedKuwoPingshu(source: source, categoryUrl: categoryUrl)
+        }
         if source.sourceType == .WIKISOURCE_API {
             return page > 1 ? [] : curatedWikisourceBooks(source: source, categoryUrl: categoryUrl)
         }
@@ -92,6 +112,14 @@ final class NovelSourceEngine {
     }
 
     func fetchBookDetailAndToc(source: NovelSource, book: NovelBook) async throws -> (NovelBook, [NovelChapter]) {
+        if source.sourceType == .XIMALAYA_PINGSHU || book.bookUrl.hasPrefix("ximalaya_album://") {
+            let eps = await fetchXimalayaPingshuEpisodes(source: source, book: book)
+            return (book, eps)
+        }
+        if source.sourceType == .KUWO_PINGSHU || book.bookUrl.hasPrefix("kuwo_album://") || book.bookUrl.hasPrefix("kuwo_search://") {
+            let eps = await fetchKuwoPingshuEpisodes(source: source, book: book)
+            return (book, eps)
+        }
         if source.sourceType == .WIKISOURCE_API || book.bookUrl.hasPrefix("wikisource://") {
             let chs = await fetchWikisourceChapters(source: source, book: book)
             var updated = book
@@ -173,6 +201,85 @@ final class NovelSourceEngine {
             return txt.count < 24 ? -1 : max(1, Int(Date().timeIntervalSince(start) * 1000))
         } catch {
             return -1
+        }
+    }
+
+    func resolvePingshuAudioUrl(source: NovelSource, episode: NovelChapter) async throws -> String {
+        let url = episode.url.trimmingCharacters(in: .whitespacesAndNewlines)
+        if url.hasPrefix("http") { return url }
+        if url.hasPrefix("ximalaya_track://") {
+            let tid = String(url.dropFirst("ximalaya_track://".count))
+            let raw = try await fetchText(urlSpec: "https://m.ximalaya.com/tracks/\(tid).json", source: source)
+            if let data = raw.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                for key in ["play_path_64", "play_path", "play_path_32"] {
+                    if let s = obj[key] as? String, s.hasPrefix("http") { return s }
+                }
+            }
+            throw NSError(domain: "CineCastPingshu", code: -1, userInfo: [NSLocalizedDescriptionKey: "音频直链不可用"])
+        }
+        if url.hasPrefix("kuwo_track://") {
+            let rid = String(url.dropFirst("kuwo_track://".count))
+            let direct = try await fetchText(urlSpec: "http://antiserver.kuwo.cn/anti.s?type=convert_url&rid=MUSIC_\(rid)&format=mp3&response=url", source: source).trimmingCharacters(in: .whitespacesAndNewlines)
+            if direct.hasPrefix("http") { return direct }
+        }
+        throw NSError(domain: "CineCastPingshu", code: -1, userInfo: [NSLocalizedDescriptionKey: "无法解析评书音频"])
+    }
+
+    private func fetchXimalayaPingshuExplore(source: NovelSource, categoryUrl: String, page: Int) async -> [NovelBook] {
+        let curated = [
+            NovelBook(id: "xm_2677356", sourceId: source.id, sourceName: source.name, title: "白眉大侠（单田芳经典全本）", author: "单田芳", intro: "全 401 回免费直连。", kind: "武侠公案", latestChapter: "全 401 回", bookUrl: "ximalaya_album://2677356", tocUrl: "ximalaya_album://2677356"),
+            NovelBook(id: "xm_3820", sourceId: source.id, sourceName: source.name, title: "乱世枭雄（单田芳经典全本）", author: "单田芳", intro: "全 485 回免费直连。", kind: "历史演义", latestChapter: "全 485 回", bookUrl: "ximalaya_album://3820", tocUrl: "ximalaya_album://3820"),
+            NovelBook(id: "xm_9742745", sourceId: source.id, sourceName: source.name, title: "郭德纲单口相声与评书精选", author: "郭德纲", intro: "194 回免费直连。", kind: "单口评书", latestChapter: "共 194 回", bookUrl: "ximalaya_album://9742745", tocUrl: "ximalaya_album://9742745")
+        ]
+        var live: [NovelBook] = []
+        if let raw = try? await fetchText(urlSpec: "https://www.ximalaya.com/revision/category/v2/albums?pageNum=\(page)&pageSize=20&sort=1&categoryId=12", source: source),
+           let data = raw.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let d = obj["data"] as? [String: Any],
+           let arr = d["albums"] as? [[String: Any]] {
+            for a in arr {
+                if (a["isPaid"] as? Bool) == true { continue }
+                guard let aid = a["albumId"] as? Int, let title = a["albumTitle"] as? String else { continue }
+                let count = a["albumTrackCount"] as? Int ?? 0
+                live.append(NovelBook(id: "xm_\(aid)", sourceId: source.id, sourceName: source.name, title: title, author: a["albumUserNickName"] as? String ?? "评书名家", intro: "全 \(count) 回免费评书", kind: "免费评书", latestChapter: "共 \(count) 回", bookUrl: "ximalaya_album://\(aid)", tocUrl: "ximalaya_album://\(aid)"))
+            }
+        }
+        var seen = Set<String>()
+        return (curated + live).filter { seen.insert($0.bookUrl).inserted }
+    }
+
+    private func fetchXimalayaPingshuEpisodes(source: NovelSource, book: NovelBook) async -> [NovelChapter] {
+        let aid = String(book.bookUrl.dropFirst("ximalaya_album://".count))
+        guard let raw = try? await fetchText(urlSpec: "https://mobile.ximalaya.com/mobile/v1/album/track?albumId=\(aid)&pageId=1&pageSize=100&isAsc=true", source: source),
+              let data = raw.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let d = obj["data"] as? [String: Any],
+              let arr = d["list"] as? [[String: Any]] else { return [] }
+        return arr.enumerated().compactMap { idx, t in
+            guard let tid = t["trackId"] as? Int, let title = t["title"] as? String else { return nil }
+            return NovelChapter(index: idx, title: title, url: "ximalaya_track://\(tid)")
+        }
+    }
+
+    private func curatedKuwoPingshu(source: NovelSource, categoryUrl: String) -> [NovelBook] {
+        [
+            NovelBook(id: "kw_alb_74399040", sourceId: source.id, sourceName: source.name, title: "隋唐演义（单田芳 · 142回）", author: "单田芳", intro: "酷我高速 MP3 直连。", kind: "单田芳", latestChapter: "全 142 回", bookUrl: "kuwo_album://74399040", tocUrl: "kuwo_album://74399040"),
+            NovelBook(id: "kw_alb_46299165", sourceId: source.id, sourceName: source.name, title: "雍正剑侠图（连丽如 · 378回）", author: "连丽如", intro: "侠客童林江湖传奇全本。", kind: "连丽如", latestChapter: "全 378 回", bookUrl: "kuwo_album://46299165", tocUrl: "kuwo_album://46299165"),
+            NovelBook(id: "kw_alb_51220830", sourceId: source.id, sourceName: source.name, title: "大唐侠女（刘兰芳 · 62回）", author: "刘兰芳", intro: "刘兰芳播讲经典评书。", kind: "刘兰芳", latestChapter: "全 62 回", bookUrl: "kuwo_album://51220830", tocUrl: "kuwo_album://51220830"),
+            NovelBook(id: "kw_alb_56364758", sourceId: source.id, sourceName: source.name, title: "红楼梦评书（66回全本）", author: "名家评书", intro: "四大名著有声评书版。", kind: "名著评书", latestChapter: "全 66 回", bookUrl: "kuwo_album://56364758", tocUrl: "kuwo_album://56364758")
+        ]
+    }
+
+    private func fetchKuwoPingshuEpisodes(source: NovelSource, book: NovelBook) async -> [NovelChapter] {
+        let aid = String(book.bookUrl.dropFirst("kuwo_album://".count))
+        guard let raw = try? await fetchText(urlSpec: "http://search.kuwo.cn/r.s?stype=albuminfo&albumid=\(aid)&show_copyright_off=1&alflac=1&vipver=1&mobi=1&rn=150&pn=0", source: source),
+              let data = raw.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arr = obj["musiclist"] as? [[String: Any]] else { return [] }
+        return arr.enumerated().compactMap { idx, m in
+            guard let id = m["id"] as? String, let title = m["name"] as? String else { return nil }
+            return NovelChapter(index: idx, title: title.replacingOccurrences(of: "&nbsp;", with: " "), url: "kuwo_track://\(id)")
         }
     }
 
