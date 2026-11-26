@@ -1,5 +1,6 @@
 package com.cinecast.app.novel.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -68,6 +69,16 @@ fun NovelReaderScreen(
 
     val currentChapter = state.chapters.getOrNull(state.currentChapterIndex)
     val fontFamily = if (settings.useSerifFont) FontFamily.Serif else FontFamily.SansSerif
+
+    BackHandler {
+        when {
+            showTocSheet -> showTocSheet = false
+            showSettingsSheet -> showSettingsSheet = false
+            showSwitchSourceSheet -> showSwitchSourceSheet = false
+            showControls -> showControls = false
+            else -> onBack()
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -225,7 +236,7 @@ fun NovelReaderScreen(
             modifier = Modifier.align(Alignment.TopCenter)
         ) {
             Surface(
-                color = panelColor.copy(alpha = 0.96f),
+                color = panelColor,
                 tonalElevation = 4.dp,
                 shadowElevation = 6.dp
             ) {
@@ -276,7 +287,7 @@ fun NovelReaderScreen(
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
             Surface(
-                color = panelColor.copy(alpha = 0.97f),
+                color = panelColor,
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
                 tonalElevation = 6.dp,
                 shadowElevation = 10.dp

@@ -2,6 +2,7 @@ package com.cinecast.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
@@ -74,6 +75,10 @@ private fun CineCastRoot(
         var currentTab by remember { mutableStateOf(MainTab.HOME) }
         var overlay by remember { mutableStateOf<ActiveOverlay>(ActiveOverlay.None) }
         var globalCastTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+        BackHandler(enabled = overlay != ActiveOverlay.None) {
+            overlay = ActiveOverlay.None
+        }
 
         when (val active = overlay) {
             is ActiveOverlay.Player -> {
