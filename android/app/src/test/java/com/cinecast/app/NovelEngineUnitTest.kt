@@ -316,4 +316,39 @@ class NovelEngineUnitTest {
         assertTrue(text.contains("滚滚长江东逝水"))
         assertTrue(text.contains("话说天下大势"))
     }
+
+    @Test
+    fun testPingshuAndBookSourcesStrictSeparationAndTing55Parser() {
+        val bookDefaults = com.cinecast.app.novel.repository.NovelRepository.defaultNovelSources()
+        val pingshuDefaults = com.cinecast.app.novel.repository.NovelRepository.defaultPingshuSources()
+
+        // Book sources must contain ZERO audio pingshu sources
+        assertTrue(bookDefaults.none { it.sourceType.isAudioPingshu })
+        // Pingshu sources must contain ONLY audio pingshu sources (5 distinct verified sources)
+        assertEquals(5, pingshuDefaults.size)
+        assertTrue(pingshuDefaults.all { it.sourceType.isAudioPingshu })
+        assertTrue(pingshuDefaults.any { it.sourceType == NovelSourceType.BILIBILI_PINGSHU })
+        assertTrue(pingshuDefaults.any { it.sourceType == NovelSourceType.TING55_PINGSHU })
+        assertTrue(pingshuDefaults.any { it.sourceType == NovelSourceType.RADIO_PINGSHU })
+
+        // Verify Ting55 HTML parser extracts title, narrator, cover, and book ID
+        val ting55Html = """
+            <div class="clist">
+              <a href="/book/14713">
+                <dl>
+                  <dt><img src="//i.ting55.com/2020/14713.jpg!180" alt="单田芳：安史之乱"></dt>
+                  <dd><h3>单田芳：安史之乱</h3><p>作者：单田芳</p><p>播音：单田芳</p><p>状态：完结</p></dd>
+                </dl>
+              </a>
+            </div>
+        """.trimIndent()
+        val engine = NovelSourceEngine()
+        val src = pingshuDefaults.first { it.sourceType == NovelSourceType.TING55_PINGSHU }
+        val books = engine.parseTing55BookListHtml(src, ting55Html)
+        assertEquals(1, books.size)
+        assertEquals("单田芳：安史之乱", books[0].title)
+        assertEquals("单田芳", books[0].author)
+        assertEquals("ting55_book://14713", books[0].bookUrl)
+        assertEquals("https://i.ting55.com/2020/14713.jpg!180", books[0].coverUrl)
+    }
 }

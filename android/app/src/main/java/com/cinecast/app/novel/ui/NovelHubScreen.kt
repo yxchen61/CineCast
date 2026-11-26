@@ -63,6 +63,7 @@ fun NovelHubScreen(
     onOpenPingshuPlayer: () -> Unit = {}
 ) {
     val sources by viewModel.sources.collectAsState()
+    val pingshuSources by viewModel.pingshuSources.collectAsState()
     val activeSourceId by viewModel.activeSourceId.collectAsState()
     val activePingshuSourceId by viewModel.activePingshuSourceId.collectAsState()
     val subscriptions by viewModel.subscriptions.collectAsState()
@@ -81,15 +82,15 @@ fun NovelHubScreen(
     }
     var isSearchMode by remember { mutableStateOf(false) }
     var showSourcePicker by remember { mutableStateOf(false) }
+    var showPingshuSourceManager by remember { mutableStateOf(false) }
 
     val focusManager = LocalFocusManager.current
     val searchFocusRequester = remember { FocusRequester() }
 
-    val enabledTextSources = remember(sources) { sources.filter { it.enabled && !it.sourceType.isAudioPingshu } }
-    val enabledPingshuSources = remember(sources) { sources.filter { it.enabled && it.sourceType.isAudioPingshu } }
-    val enabledSources = remember(sources) { sources.filter { it.enabled } }
+    val enabledTextSources = remember(sources) { sources.filter { it.enabled } }
+    val enabledPingshuSources = remember(pingshuSources) { pingshuSources.filter { it.enabled } }
     val activeSource = remember(sources, activeSourceId, enabledTextSources) {
-        sources.firstOrNull { it.id == activeSourceId && !it.sourceType.isAudioPingshu } ?: enabledTextSources.firstOrNull()
+        sources.firstOrNull { it.id == activeSourceId } ?: enabledTextSources.firstOrNull()
     }
 
     LaunchedEffect(isSearchMode) {
@@ -235,6 +236,33 @@ fun NovelHubScreen(
                                     )
                                 }
                             }
+                        } else if (currentSubTab == NovelSubTab.PINGSHU) {
+                            Surface(
+                                onClick = { showPingshuSourceManager = true },
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.85f),
+                                modifier = Modifier.weight(1f, fill = false)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(start = 10.dp, end = 8.dp, top = 5.dp, bottom = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Podcasts,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        text = "评书源 ${enabledPingshuSources.size}/${pingshuSources.size}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
                         }
                         Spacer(Modifier.weight(1f))
                         FilledTonalIconButton(
@@ -266,7 +294,7 @@ fun NovelHubScreen(
                                 val selected = currentSubTab == tab
                                 val badge = when (tab) {
                                     NovelSubTab.BOOKSHELF -> if (bookshelf.isNotEmpty()) " ${bookshelf.size}" else ""
-                                    NovelSubTab.SOURCES -> " ${enabledSources.size}"
+                                    NovelSubTab.SOURCES -> " ${enabledTextSources.size}"
                                     NovelSubTab.DISCOVER -> ""
                                     NovelSubTab.PINGSHU -> ""
                                 }
@@ -344,9 +372,11 @@ fun NovelHubScreen(
                     NovelSubTab.PINGSHU -> NovelPingshuPane(
                         browseState = pingshuBrowseState,
                         pingshuSources = enabledPingshuSources,
+                        totalPingshuSourceCount = pingshuSources.size,
                         activePingshuSourceId = activePingshuSourceId,
                         history = pingshuHistory,
                         onSelectPingshuSource = { viewModel.selectPingshuSource(it) },
+                        onOpenPingshuSourceManager = { showPingshuSourceManager = true },
                         onSelectCategory = { viewModel.selectPingshuCategory(it) },
                         onQueryChange = { viewModel.updatePingshuSearchQuery(it) },
                         onSearch = { viewModel.searchPingshu(it) },
@@ -424,6 +454,24 @@ fun NovelHubScreen(
                     }
                 }
             }
+        }
+    }
+
+    // Dedicated Independent Pingshu Source Manager BottomSheet (100% separated from Book Sources)
+    if (showPingshuSourceManager) {
+        ModalBottomSheet(
+            onDismissRequest = { showPingshuSourceManager = false },
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        ) {
+            PingshuSourcesManagerSheetContent(
+                pingshuSources = pingshuSources,
+                activePingshuSourceId = activePingshuSourceId,
+                viewModel = viewModel,
+                onSelectActive = { id ->
+                    viewModel.selectPingshuSource(id)
+                    showPingshuSourceManager = false
+                }
+            )
         }
     }
 
@@ -997,9 +1045,11 @@ private fun NovelSearchResultsPane(
 private fun NovelPingshuPane(
     browseState: com.cinecast.app.novel.viewmodel.PingshuBrowseUiState,
     pingshuSources: List<NovelSource>,
+    totalPingshuSourceCount: Int,
     activePingshuSourceId: String,
     history: List<PingshuHistoryItem>,
     onSelectPingshuSource: (String) -> Unit,
+    onOpenPingshuSourceManager: () -> Unit,
     onSelectCategory: (Int) -> Unit,
     onQueryChange: (String) -> Unit,
     onSearch: (String) -> Unit,
@@ -1063,24 +1113,31 @@ private fun NovelPingshuPane(
                     }
                 }
 
-                // Pingshu Audio Source Selector Chips
-                if (pingshuSources.isNotEmpty()) {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(pingshuSources, key = { it.id }) { src ->
-                            val sel = src.id == activePingshuSourceId || (activePingshuSourceId.isBlank() && src == pingshuSources.first())
-                            FilterChip(
-                                selected = sel,
-                                onClick = { onSelectPingshuSource(src.id) },
-                                label = { Text(src.name.substringBefore(" ")) },
-                                leadingIcon = { Icon(Icons.Rounded.Radio, contentDescription = null, modifier = Modifier.size(15.dp)) }
-                            )
-                        }
-                        items(listOf("单田芳", "袁阔成", "刘兰芳", "连丽如", "郭德纲")) { master ->
-                            SuggestionChip(
-                                onClick = { onSearch(master) },
-                                label = { Text(master) }
-                            )
-                        }
+                // Pingshu Audio Source Selector Chips + Dedicated Pingshu Source Manager Entry
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item {
+                        AssistChip(
+                            onClick = onOpenPingshuSourceManager,
+                            label = { Text("管理评书源 (${pingshuSources.size}/$totalPingshuSourceCount)") },
+                            leadingIcon = { Icon(Icons.Rounded.Tune, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                        )
+                    }
+                    items(pingshuSources, key = { it.id }) { src ->
+                        val sel = src.id == activePingshuSourceId || (activePingshuSourceId.isBlank() && src == pingshuSources.first())
+                        FilterChip(
+                            selected = sel,
+                            onClick = { onSelectPingshuSource(src.id) },
+                            label = { Text(src.name.substringBefore(" ")) },
+                            leadingIcon = { Icon(Icons.Rounded.Radio, contentDescription = null, modifier = Modifier.size(15.dp)) }
+                        )
+                    }
+                }
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(listOf("单田芳", "袁阔成", "田连元", "刘兰芳", "连丽如", "郭德纲", "王玥波", "张少佐")) { master ->
+                        SuggestionChip(
+                            onClick = { onSearch(master) },
+                            label = { Text(master) }
+                        )
                     }
                 }
             }
@@ -1267,10 +1324,9 @@ private fun NovelSourcesPane(
 
     val filtered = remember(sources, filterTab) {
         when (filterTab) {
-            1 -> sources.filter { !it.sourceType.isAudioPingshu && it.sourceType != NovelSourceType.LEGADO_HTML }
-            2 -> sources.filter { it.sourceType.isAudioPingshu }
-            3 -> sources.filter { it.sourceType == NovelSourceType.LEGADO_HTML }
-            4 -> sources.filter { it.enabled }
+            1 -> sources.filter { it.sourceType != NovelSourceType.LEGADO_HTML }
+            2 -> sources.filter { it.sourceType == NovelSourceType.LEGADO_HTML }
+            3 -> sources.filter { it.enabled }
             else -> sources
         }
     }
@@ -1300,7 +1356,7 @@ private fun NovelSourcesPane(
                     }
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "与视频源完全独立管理。支持一键导入 XIU2/Yuedu、liufuyou/read 等开源书源仓库或任意 Legado JSON 链接。",
+                        "仅管理文字书籍书源，与影视源、评书音频源 100% 物理分离。支持一键导入 XIU2/Yuedu、liufuyou/read 等开源书源仓库或任意 Legado JSON 链接。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1392,13 +1448,12 @@ private fun NovelSourcesPane(
             }
         }
 
-        // Filter Chips
+        // Filter Chips (Pure Book Sources Only)
         item {
             val labels = listOf(
-                "全部 (${sources.size})",
-                "名著/API (${sources.count { !it.sourceType.isAudioPingshu && it.sourceType != NovelSourceType.LEGADO_HTML }})",
-                "评书源 (${sources.count { it.sourceType.isAudioPingshu }})",
-                "规则源 (${sources.count { it.sourceType == NovelSourceType.LEGADO_HTML }})",
+                "全部书源 (${sources.size})",
+                "名著/API (${sources.count { it.sourceType != NovelSourceType.LEGADO_HTML }})",
+                "规则书源 (${sources.count { it.sourceType == NovelSourceType.LEGADO_HTML }})",
                 "已启用 (${sources.count { it.enabled }})"
             )
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1938,6 +1993,282 @@ private fun AddOrEditNovelSourceDialog(
                 if (name.isNotBlank() && baseUrl.isNotBlank()) {
                     onSave(name, baseUrl, group, searchUrl, listRule, nameRule, urlRule, tocRule, contentRule)
                 }
+            }) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+// ==================== 独立评书音频源管理面板（与书籍书源彻底分离） ====================
+
+@Composable
+private fun PingshuSourcesManagerSheetContent(
+    pingshuSources: List<NovelSource>,
+    activePingshuSourceId: String,
+    viewModel: NovelViewModel,
+    onSelectActive: (String) -> Unit
+) {
+    val clipboard = LocalClipboardManager.current
+    var showAddDialog by remember { mutableStateOf(false) }
+    var editingSource by remember { mutableStateOf<NovelSource?>(null) }
+    var showRestoreDialog by remember { mutableStateOf(false) }
+    var exportedNotice by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp, vertical = 6.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "独立评书源管理 (${pingshuSources.count { it.enabled }}/${pingshuSources.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "评书音频源独立存储与管理，与文字书籍书源、影视源完全分离。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            FilledTonalButton(
+                onClick = {
+                    editingSource = null
+                    showAddDialog = true
+                },
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("添加评书源")
+            }
+            OutlinedButton(
+                onClick = {
+                    clipboard.setText(AnnotatedString(viewModel.novelRepository.exportPingshuBackupJson()))
+                    exportedNotice = true
+                },
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("导出")
+            }
+            OutlinedButton(
+                onClick = { showRestoreDialog = true },
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("恢复")
+            }
+        }
+
+        if (exportedNotice) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "独立评书源备份 JSON 已复制到剪贴板。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 460.dp)
+        ) {
+            items(pingshuSources, key = { it.id }) { src ->
+                val isCurrent = src.id == activePingshuSourceId
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isCurrent) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerLow
+                        }
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        src.name,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    AssistChipBadge(src.sourceType.badge)
+                                    src.latencyMs?.let { ms ->
+                                        Spacer(Modifier.width(6.dp))
+                                        Surface(
+                                            color = if (ms > 0) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.errorContainer,
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text(
+                                                text = if (ms < 0) "超时" else "${ms}ms",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    src.comment.ifBlank { "${src.group} · ${src.baseUrl}" },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Switch(
+                                checked = src.enabled,
+                                onCheckedChange = { viewModel.togglePingshuSourceEnabled(src) }
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            if (src.enabled && !isCurrent) {
+                                TextButton(onClick = { onSelectActive(src.id) }) {
+                                    Text("设为当前源")
+                                }
+                            }
+                            TextButton(onClick = { viewModel.testPingshuSourceLatency(src) }) {
+                                Icon(Icons.Rounded.Speed, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("测速")
+                            }
+                            TextButton(onClick = {
+                                editingSource = src
+                                showAddDialog = true
+                            }) { Text("编辑") }
+                            TextButton(onClick = { viewModel.deletePingshuSource(src.id) }) {
+                                Text("删除", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(18.dp)) }
+        }
+    }
+
+    if (showAddDialog) {
+        AddOrEditPingshuSourceDialog(
+            initial = editingSource,
+            onDismiss = { showAddDialog = false },
+            onSave = { name, baseUrl, type, group, comment ->
+                viewModel.saveCustomPingshuSource(editingSource?.id, name, baseUrl, type, group, comment)
+                showAddDialog = false
+            }
+        )
+    }
+
+    if (showRestoreDialog) {
+        var raw by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showRestoreDialog = false },
+            title = { Text("恢复评书源备份") },
+            text = {
+                OutlinedTextField(
+                    value = raw,
+                    onValueChange = { raw = it },
+                    placeholder = { Text("粘贴导出的评书源 JSON...") },
+                    minLines = 5,
+                    maxLines = 8,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (raw.isNotBlank()) {
+                        viewModel.importPingshuBackup(raw)
+                        showRestoreDialog = false
+                    }
+                }) { Text("恢复") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRestoreDialog = false }) { Text("取消") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun AddOrEditPingshuSourceDialog(
+    initial: NovelSource?,
+    onDismiss: () -> Unit,
+    onSave: (name: String, baseUrl: String, type: NovelSourceType, group: String, comment: String) -> Unit
+) {
+    val pingshuTypes = remember { NovelSourceType.entries.filter { it.isAudioPingshu } }
+    var name by remember { mutableStateOf(initial?.name.orEmpty()) }
+    var baseUrl by remember { mutableStateOf(initial?.baseUrl.orEmpty()) }
+    var group by remember { mutableStateOf(initial?.group ?: "自定义评书源") }
+    var comment by remember { mutableStateOf(initial?.comment.orEmpty()) }
+    var type by remember {
+        mutableStateOf(
+            initial?.sourceType?.takeIf { it.isAudioPingshu } ?: NovelSourceType.BILIBILI_PINGSHU
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) "添加自定义评书源" else "编辑评书源") },
+        text = {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.heightIn(max = 420.dp)
+            ) {
+                item {
+                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("评书源名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                }
+                item {
+                    OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it }, label = { Text("接口地址（留空使用协议默认地址）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                }
+                item {
+                    OutlinedTextField(value = group, onValueChange = { group = it }, label = { Text("分组标签") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                }
+                item {
+                    OutlinedTextField(value = comment, onValueChange = { comment = it }, label = { Text("备注说明") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                }
+                item {
+                    Text("评书音频协议", style = MaterialTheme.typography.labelLarge)
+                    pingshuTypes.forEach { t ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().clickable { type = t }
+                        ) {
+                            RadioButton(selected = type == t, onClick = { type = t })
+                            Text(t.displayName, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                if (name.isNotBlank()) onSave(name, baseUrl, type, group, comment)
             }) { Text("保存") }
         },
         dismissButton = {

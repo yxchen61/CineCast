@@ -6,7 +6,9 @@ import SwiftUI
 @MainActor
 final class NovelStore: ObservableObject {
     @Published var sources: [NovelSource] = []
+    @Published var pingshuSources: [NovelSource] = []
     @Published var activeSourceId: String = ""
+    @Published var activePingshuSourceId: String = ""
     @Published var subscriptions: [NovelSubscription] = []
     @Published var bookshelf: [BookshelfItem] = []
     @Published var readingSettings: NovelReadingSettings = NovelReadingSettings()
@@ -72,11 +74,31 @@ final class NovelStore: ObservableObject {
         }
     }
 
-    var enabledSources: [NovelSource] { sources.filter { $0.enabled && !$0.sourceType.isAudioPingshu } }
-    var enabledPingshuSources: [NovelSource] { sources.filter { $0.enabled && $0.sourceType.isAudioPingshu } }
+    var enabledSources: [NovelSource] { sources.filter(\.enabled) }
+    var enabledPingshuSources: [NovelSource] { pingshuSources.filter(\.enabled) }
+    var activePingshuSource: NovelSource? {
+        pingshuSources.first { $0.id == activePingshuSourceId } ?? enabledPingshuSources.first
+    }
+
+    func selectPingshuSource(_ id: String) {
+        activePingshuSourceId = id
+        Task { await loadPingshuExplore() }
+    }
+
+    func upsertPingshuSource(_ src: NovelSource) {
+        if let idx = pingshuSources.firstIndex(where: { $0.id == src.id }) { pingshuSources[idx] = src }
+        else { pingshuSources.insert(src, at: 0) }
+        persist(pingshuSources, file: "pingshu_sources.json")
+    }
+
+    func deletePingshuSource(_ id: String) {
+        pingshuSources.removeAll { $0.id == id }
+        persist(pingshuSources, file: "pingshu_sources.json")
+        if activePingshuSourceId == id { activePingshuSourceId = enabledPingshuSources.first?.id ?? "" }
+    }
 
     func loadPingshuExplore() async {
-        guard let src = enabledPingshuSources.first,
+        guard let src = activePingshuSource,
               let firstCat = NovelSourceEngine.shared.getExploreCategories(source: src).first else { return }
         isLoadingPingshu = true
         pingshuAlbums = (try? await NovelSourceEngine.shared.fetchExplore(source: src, categoryUrl: firstCat.url, page: 1)) ?? []
@@ -84,7 +106,7 @@ final class NovelStore: ObservableObject {
     }
 
     func openPingshuAlbum(_ album: NovelBook) async {
-        guard let src = sources.first(where: { $0.id == album.sourceId }) ?? enabledPingshuSources.first else { return }
+        guard let src = pingshuSources.first(where: { $0.id == album.sourceId }) ?? activePingshuSource else { return }
         activePingshuAlbum = album
         if let (_, eps) = try? await NovelSourceEngine.shared.fetchBookDetailAndToc(source: src, book: album), !eps.isEmpty {
             pingshuEpisodes = eps
@@ -94,7 +116,7 @@ final class NovelStore: ObservableObject {
 
     func playPingshuEpisode(_ index: Int, source: NovelSource? = nil) async {
         guard index >= 0, index < pingshuEpisodes.count else { return }
-        let src = source ?? sources.first(where: { $0.id == activePingshuAlbum?.sourceId }) ?? enabledPingshuSources.first
+        let src = source ?? pingshuSources.first(where: { $0.id == activePingshuAlbum?.sourceId }) ?? activePingshuSource
         guard let src else { return }
         currentPingshuIndex = index
         guard let stream = try? await NovelSourceEngine.shared.resolvePingshuAudioUrl(source: src, episode: pingshuEpisodes[index]),
@@ -105,7 +127,14 @@ final class NovelStore: ObservableObject {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
         try? AVAudioSession.sharedInstance().setActive(true)
         if let obs = pingshuEndObserver { NotificationCenter.default.removeObserver(obs); pingshuEndObserver = nil }
-        let item = AVPlayerItem(url: url)
+        let host = url.host?.lowercased() ?? ""
+        let item: AVPlayerItem
+        if host.contains("bilivideo") || host.contains("hdslb") || host.contains("akamaized") || host.contains("bilibili") {
+            let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": MusicSourceEngine.bilibiliHeaders])
+            item = AVPlayerItem(asset: asset)
+        } else {
+            item = AVPlayerItem(url: url)
+        }
         let p = AVPlayer(playerItem: item)
         pingshuPlayer = p
         pingshuEndObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
@@ -479,11 +508,12 @@ final class NovelStore: ObservableObject {
     private func loadAll() {
         let defaults = Self.defaultNovelSources()
         if let saved: [NovelSource] = read("novel_sources.json") {
-            let isPreV140 = !saved.contains(where: { $0.id == "open_wikisource_classics" })
-            let isPreV160 = !saved.contains(where: { $0.id == "open_5000yan_classics" })
+            let textOnly = saved.filter { !$0.sourceType.isAudioPingshu }
+            let isPreV140 = !textOnly.contains(where: { $0.id == "open_wikisource_classics" })
+            let isPreV160 = !textOnly.contains(where: { $0.id == "open_5000yan_classics" })
             let flakyIds: Set<String> = ["git_xiu2_sudugu", "git_liufuyou_qbtr"]
             let overseasIds: Set<String> = ["open_wikisource_classics", "open_gutendex_classics"]
-            let cleaned = saved.map { src -> NovelSource in
+            let cleaned = textOnly.map { src -> NovelSource in
                 if isPreV160 && overseasIds.contains(src.id) {
                     var c = src; c.enabled = false; c.group = "海外公版源 (需科学上网)"; return c
                 }
@@ -495,12 +525,25 @@ final class NovelStore: ObservableObject {
             let existingIds = Set(cleaned.map(\.id))
             let missing = defaults.filter { !existingIds.contains($0.id) && $0.enabled }
             sources = missing + cleaned
-            if !missing.isEmpty || isPreV140 || isPreV160 { persist(sources, file: "novel_sources.json") }
+            if sources != saved { persist(sources, file: "novel_sources.json") }
         } else {
             sources = defaults
             persist(sources, file: "novel_sources.json")
         }
         activeSourceId = enabledSources.first?.id ?? sources.first?.id ?? ""
+
+        let psDefaults = Self.defaultPingshuSources()
+        if let savedPs: [NovelSource] = read("pingshu_sources.json") {
+            let existingPs = Set(savedPs.map(\.id))
+            let missingPs = psDefaults.filter { !existingPs.contains($0.id) }
+            pingshuSources = missingPs.isEmpty ? savedPs : (missingPs + savedPs)
+            if !missingPs.isEmpty { persist(pingshuSources, file: "pingshu_sources.json") }
+        } else {
+            pingshuSources = psDefaults
+            persist(pingshuSources, file: "pingshu_sources.json")
+        }
+        activePingshuSourceId = enabledPingshuSources.first?.id ?? pingshuSources.first?.id ?? ""
+
         subscriptions = read("novel_subs.json") ?? Self.defaultNovelSubscriptions()
         bookshelf = read("novel_bookshelf.json") ?? []
         readingSettings = read("novel_settings.json") ?? NovelReadingSettings()
@@ -556,22 +599,6 @@ final class NovelStore: ObservableObject {
                 ruleContent: NovelRuleContent(content: "$.data.content")
             ),
             NovelSource(
-                id: "open_ximalaya_pingshu",
-                name: "喜马拉雅评书馆 (免费高清音频)",
-                baseUrl: "https://www.ximalaya.com",
-                group: "听评书专区 (音频直连)",
-                sourceType: .XIMALAYA_PINGSHU,
-                searchUrl: "https://www.ximalaya.com/revision/category/v2/albums"
-            ),
-            NovelSource(
-                id: "open_kuwo_pingshu",
-                name: "酷我评书名家馆 (MP3极速直连)",
-                baseUrl: "http://search.kuwo.cn",
-                group: "听评书专区 (音频直连)",
-                sourceType: .KUWO_PINGSHU,
-                searchUrl: "http://search.kuwo.cn/r.s"
-            ),
-            NovelSource(
                 id: "git_xiu2_sudugu",
                 name: "速读谷 (备用规则源)",
                 baseUrl: "https://www.sudugu.co",
@@ -592,6 +619,16 @@ final class NovelStore: ObservableObject {
                 searchUrl: "/e/search/index.php,{\"charset\":\"gb2312\",\"method\":\"POST\",\"body\":\"keyboard={{key}}&show=title&classid=0\"}",
                 exploreUrl: "同人小说::/tongren/\n常规小说::/changgui/"
             )
+        ]
+    }
+
+    static func defaultPingshuSources() -> [NovelSource] {
+        [
+            NovelSource(id: "ps_bilibili_classics", name: "B站全本评书馆 (默认首选·分P无损)", baseUrl: "https://api.bilibili.com", group: "全本名家评书", sourceType: .BILIBILI_PINGSHU),
+            NovelSource(id: "open_ximalaya_pingshu", name: "喜马拉雅评书馆 (免费高清 M4A)", baseUrl: "https://www.ximalaya.com", group: "全本名家评书", sourceType: .XIMALAYA_PINGSHU),
+            NovelSource(id: "open_kuwo_pingshu", name: "酷我评书名家馆 (MP3 极速直连)", baseUrl: "http://search.kuwo.cn", group: "全本名家评书", sourceType: .KUWO_PINGSHU),
+            NovelSource(id: "ps_ting55_story", name: "恋听网评书相声馆 (评书/相声/讲坛)", baseUrl: "https://m.ting55.com", group: "评书相声有声站", sourceType: .TING55_PINGSHU),
+            NovelSource(id: "ps_radio_quyi", name: "曲艺相声 24h 有声电台 (直播听书)", baseUrl: "https://de1.api.radio-browser.info/json", group: "24h 曲艺电台", sourceType: .RADIO_PINGSHU)
         ]
     }
 

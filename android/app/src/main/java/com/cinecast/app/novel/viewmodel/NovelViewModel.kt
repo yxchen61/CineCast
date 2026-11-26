@@ -83,6 +83,7 @@ class NovelViewModel : ViewModel() {
     val pingshuAudioController = app.pingshuAudioController
 
     val sources = novelRepository.sources
+    val pingshuSources = novelRepository.pingshuSources
     val activeSourceId = novelRepository.activeSourceId
     val activePingshuSourceId = novelRepository.activePingshuSourceId
     val subscriptions = novelRepository.subscriptions
@@ -153,16 +154,16 @@ class NovelViewModel : ViewModel() {
         loadPingshuExplore(reset = true)
     }
 
-    fun getEnabledSources(): List<NovelSource> = sources.value.filter { it.enabled && !it.sourceType.isAudioPingshu }
+    fun getEnabledSources(): List<NovelSource> = sources.value.filter { it.enabled }
 
-    fun getEnabledPingshuSources(): List<NovelSource> = sources.value.filter { it.enabled && it.sourceType.isAudioPingshu }
+    fun getEnabledPingshuSources(): List<NovelSource> = pingshuSources.value.filter { it.enabled }
 
     fun getActiveSource(): NovelSource? =
-        novelRepository.getSourceById(activeSourceId.value)?.takeIf { !it.sourceType.isAudioPingshu }
+        novelRepository.getSourceById(activeSourceId.value)
             ?: getEnabledSources().firstOrNull()
 
     fun getActivePingshuSource(): NovelSource? =
-        novelRepository.getSourceById(activePingshuSourceId.value)?.takeIf { it.sourceType.isAudioPingshu }
+        novelRepository.getPingshuSourceById(activePingshuSourceId.value)
             ?: getEnabledPingshuSources().firstOrNull()
 
     fun selectSource(sourceId: String) {
@@ -682,7 +683,7 @@ class NovelViewModel : ViewModel() {
     }
 
     fun openPingshuAlbum(album: NovelBook, startIndex: Int? = null, startPosMs: Long? = null) {
-        val source = novelRepository.getSourceById(album.sourceId) ?: getActivePingshuSource() ?: return
+        val source = novelRepository.getPingshuSourceById(album.sourceId) ?: getActivePingshuSource() ?: return
         val saved = novelRepository.getPingshuHistory(album.sourceId, album.bookUrl)
         pingshuPlayJob?.cancel()
         pingshuPlayJob = viewModelScope.launch {
@@ -1033,6 +1034,80 @@ class NovelViewModel : ViewModel() {
                 loadExplore(reset = true)
             }.onFailure {
                 _toastMessage.tryEmit("小说备份格式错误：${it.message}")
+            }
+        }
+    }
+
+    // ==================== 独立评书源管理（与书籍书源彻底分离） ====================
+
+    fun togglePingshuSourceEnabled(source: NovelSource) {
+        viewModelScope.launch {
+            novelRepository.upsertPingshuSource(source.copy(enabled = !source.enabled))
+        }
+    }
+
+    fun deletePingshuSource(sourceId: String) {
+        viewModelScope.launch {
+            novelRepository.deletePingshuSource(sourceId)
+            _toastMessage.tryEmit("已删除评书源")
+            loadPingshuExplore(reset = true)
+        }
+    }
+
+    fun testPingshuSourceLatency(source: NovelSource) {
+        viewModelScope.launch {
+            val ms = novelEngine.pingSource(source)
+            novelRepository.updatePingshuSourceLatency(source.id, ms)
+            val msg = if (ms < 0) "${source.name} 连接超时或暂不可用" else "${source.name} 响应正常 (${ms} ms)"
+            _toastMessage.tryEmit(msg)
+        }
+    }
+
+    fun saveCustomPingshuSource(
+        existingId: String?,
+        name: String,
+        baseUrl: String,
+        type: NovelSourceType,
+        group: String,
+        comment: String = ""
+    ) {
+        viewModelScope.launch {
+            val existing = existingId?.let { novelRepository.getPingshuSourceById(it) }
+            val resolvedBase = baseUrl.trim().ifBlank {
+                when (type) {
+                    NovelSourceType.BILIBILI_PINGSHU -> "https://api.bilibili.com"
+                    NovelSourceType.XIMALAYA_PINGSHU -> "https://www.ximalaya.com"
+                    NovelSourceType.KUWO_PINGSHU -> "http://search.kuwo.cn"
+                    NovelSourceType.TING55_PINGSHU -> "https://m.ting55.com"
+                    NovelSourceType.RADIO_PINGSHU -> "https://de1.api.radio-browser.info/json"
+                    else -> "https://api.bilibili.com"
+                }
+            }
+            val src = (existing ?: NovelSource(
+                id = "custom_ps_${UUID.randomUUID().toString().take(8)}",
+                name = name.trim(),
+                baseUrl = resolvedBase,
+                sourceType = if (type.isAudioPingshu) type else NovelSourceType.BILIBILI_PINGSHU
+            )).copy(
+                name = name.trim(),
+                baseUrl = resolvedBase,
+                sourceType = if (type.isAudioPingshu) type else NovelSourceType.BILIBILI_PINGSHU,
+                group = group.trim().ifBlank { "自定义评书源" },
+                comment = comment.trim().ifBlank { existing?.comment.orEmpty() }
+            )
+            novelRepository.upsertPingshuSource(src)
+            _toastMessage.tryEmit("已保存评书源：${src.name}")
+        }
+    }
+
+    fun importPingshuBackup(rawJson: String) {
+        viewModelScope.launch {
+            runCatching {
+                novelRepository.importPingshuBackupJson(rawJson)
+                _toastMessage.tryEmit("评书源与听书历史备份恢复成功")
+                loadPingshuExplore(reset = true)
+            }.onFailure {
+                _toastMessage.tryEmit("评书备份格式错误：${it.message}")
             }
         }
     }

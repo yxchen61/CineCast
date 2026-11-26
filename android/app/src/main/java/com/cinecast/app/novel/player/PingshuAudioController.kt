@@ -45,7 +45,28 @@ class PingshuAudioController(context: Context) {
     @OptIn(UnstableApi::class)
     private fun ensurePlayer(): ExoPlayer {
         exoPlayer?.let { return it }
-        val dataSourceFactory = OkHttpDataSource.Factory(NetworkClient.client)
+        val pingshuHttpClient = NetworkClient.client.newBuilder()
+            .addInterceptor { chain ->
+                val req = chain.request()
+                val host = req.url.host.lowercase()
+                val builder = req.newBuilder()
+                when {
+                    host.contains("bilivideo") || host.contains("hdslb") ||
+                        host.contains("akamaized") || host.contains("bilibili") -> {
+                        builder.header("Referer", "https://www.bilibili.com/")
+                        builder.header(
+                            "User-Agent",
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+                        )
+                    }
+                    host.contains("ting55") -> {
+                        builder.header("Referer", "https://m.ting55.com/")
+                    }
+                }
+                chain.proceed(builder.build())
+            }
+            .build()
+        val dataSourceFactory = OkHttpDataSource.Factory(pingshuHttpClient)
             .setUserAgent(NetworkClient.DEFAULT_UA)
         val audioAttrs = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)

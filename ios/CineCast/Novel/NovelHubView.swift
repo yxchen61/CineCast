@@ -7,6 +7,7 @@ struct NovelHubView: View {
     @State private var subTab = 1 // 0=书架 1=书城 2=书源
     @State private var isSearchMode = false
     @State private var showSourcePicker = false
+    @State private var showPingshuSourcesSheet = false
     @State private var subUrlInput = "https://fastly.jsdelivr.net/gh/XIU2/Yuedu@master/shuyuan"
     @State private var showPasteSheet = false
     @State private var pasteJsonText = ""
@@ -98,6 +99,35 @@ struct NovelHubView: View {
             }
             .onAppear {
                 if !novelStore.bookshelf.isEmpty && subTab == 1 { subTab = 0 }
+            }
+            // 独立评书源管理弹窗
+            .sheet(isPresented: $showPingshuSourcesSheet) {
+                NavigationStack {
+                    List {
+                        Section("独立评书音频源 (\(novelStore.enabledPingshuSources.count)/\(novelStore.pingshuSources.count))") {
+                            ForEach(novelStore.pingshuSources) { src in
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(src.name).font(.subheadline.weight(.semibold))
+                                        Text("\(src.sourceType.badge) · \(src.baseUrl)").font(.caption2).foregroundColor(.secondary)
+                                    }
+                                    Spacer()
+                                    Toggle("", isOn: Binding(
+                                        get: { src.enabled },
+                                        set: { val in
+                                            var u = src; u.enabled = val
+                                            novelStore.upsertPingshuSource(u)
+                                        }
+                                    )).labelsHidden()
+                                }
+                            }
+                        }
+                    }
+                    .navigationTitle("独立评书源管理")
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) { Button("完成") { showPingshuSourcesSheet = false } }
+                    }
+                }
             }
             .confirmationDialog("切换小说书源", isPresented: $showSourcePicker) {
                 ForEach(novelStore.enabledSources) { src in
@@ -207,6 +237,29 @@ struct NovelHubView: View {
     // MARK: - 听评书
     private var pingshuBody: some View {
         VStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    Button { showPingshuSourcesSheet = true } label: {
+                        Label("评书源 \(novelStore.enabledPingshuSources.count)/\(novelStore.pingshuSources.count)", systemImage: "slider.horizontal.3")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(Color.googleBlueSoft.opacity(0.7))
+                            .foregroundColor(.googleBlue)
+                            .clipShape(Capsule())
+                    }
+                    ForEach(novelStore.enabledPingshuSources) { src in
+                        Button(src.name.components(separatedBy: " ").first ?? src.name) {
+                            novelStore.selectPingshuSource(src.id)
+                        }
+                        .font(.caption.weight(.medium))
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(src.id == novelStore.activePingshuSourceId ? Color.googleBlue : Color(.secondarySystemBackground))
+                        .foregroundColor(src.id == novelStore.activePingshuSourceId ? .white : .primary)
+                        .clipShape(Capsule())
+                    }
+                }
+                .padding(.horizontal, 14).padding(.vertical, 8)
+            }
             if let active = novelStore.activePingshuAlbum {
                 HStack {
                     Image(systemName: "headphones").foregroundColor(.googleBlue)

@@ -37,6 +37,30 @@ class NovelSourceEngine {
                 NovelExploreCategory("国学经典与诗词", "yan5000_cat://guoxue")
             )
         }
+        if (source.sourceType == NovelSourceType.BILIBILI_PINGSHU) {
+            return listOf(
+                NovelExploreCategory("全部名家全本", "bili_ps://all"),
+                NovelExploreCategory("单田芳全本", "bili_ps://stf"),
+                NovelExploreCategory("袁阔成/田连元", "bili_ps://classic"),
+                NovelExploreCategory("刘兰芳/连丽如", "bili_ps://masters"),
+                NovelExploreCategory("郭德纲/王玥波", "bili_ps://modern")
+            )
+        }
+        if (source.sourceType == NovelSourceType.TING55_PINGSHU) {
+            return listOf(
+                NovelExploreCategory("评书人气榜", "https://m.ting55.com/paihang/14"),
+                NovelExploreCategory("评书最新", "https://m.ting55.com/category/14"),
+                NovelExploreCategory("相声小品", "https://m.ting55.com/paihang/12"),
+                NovelExploreCategory("百家讲坛", "https://m.ting55.com/paihang/13"),
+                NovelExploreCategory("古典有声", "https://m.ting55.com/paihang/11")
+            )
+        }
+        if (source.sourceType == NovelSourceType.RADIO_PINGSHU) {
+            return listOf(
+                NovelExploreCategory("曲艺相声故事台", "radio_ps://quyi"),
+                NovelExploreCategory("全国热门有声台", "radio_ps://cn")
+            )
+        }
         if (source.sourceType == NovelSourceType.XIMALAYA_PINGSHU) {
             return listOf(
                 NovelExploreCategory("热门免费评书", "xm_cat://hot"),
@@ -86,6 +110,17 @@ class NovelSourceEngine {
             if (page > 1) return@withContext emptyList()
             return@withContext getCurated5000yanBooks(source, categoryUrl)
         }
+        if (source.sourceType == NovelSourceType.BILIBILI_PINGSHU) {
+            if (page > 1) return@withContext emptyList()
+            return@withContext fetchBilibiliPingshuExplore(source, categoryUrl)
+        }
+        if (source.sourceType == NovelSourceType.TING55_PINGSHU) {
+            return@withContext fetchTing55PingshuExplore(source, categoryUrl, page)
+        }
+        if (source.sourceType == NovelSourceType.RADIO_PINGSHU) {
+            if (page > 1) return@withContext emptyList()
+            return@withContext fetchRadioPingshuExplore(source, categoryUrl)
+        }
         if (source.sourceType == NovelSourceType.XIMALAYA_PINGSHU) {
             return@withContext fetchXimalayaPingshuExplore(source, categoryUrl, page)
         }
@@ -117,6 +152,15 @@ class NovelSourceEngine {
 
         if (source.sourceType == NovelSourceType.CLASSICS_5000YAN) {
             return@withContext search5000yanBooks(source, q)
+        }
+        if (source.sourceType == NovelSourceType.BILIBILI_PINGSHU) {
+            return@withContext searchBilibiliPingshu(source, q)
+        }
+        if (source.sourceType == NovelSourceType.TING55_PINGSHU) {
+            return@withContext searchTing55Pingshu(source, q)
+        }
+        if (source.sourceType == NovelSourceType.RADIO_PINGSHU) {
+            return@withContext searchRadioPingshu(source, q)
         }
         if (source.sourceType == NovelSourceType.XIMALAYA_PINGSHU) {
             return@withContext searchXimalayaPingshu(source, q)
@@ -150,6 +194,21 @@ class NovelSourceEngine {
             return@withContext book.copy(
                 latestChapter = chapters.lastOrNull()?.title?.ifBlank { "全本典藏" } ?: "全本典藏"
             ) to chapters
+        }
+        if (source.sourceType == NovelSourceType.BILIBILI_PINGSHU || book.bookUrl.startsWith("bili_ps_album://")) {
+            val episodes = fetchBilibiliPingshuEpisodes(source, book)
+            return@withContext book.copy(latestChapter = "共 ${episodes.size} 回") to episodes
+        }
+        if (source.sourceType == NovelSourceType.TING55_PINGSHU || book.bookUrl.startsWith("ting55_book://")) {
+            val episodes = fetchTing55PingshuEpisodes(source, book)
+            return@withContext book.copy(latestChapter = "共 ${episodes.size} 回") to episodes
+        }
+        if (source.sourceType == NovelSourceType.RADIO_PINGSHU || book.bookUrl.startsWith("radio_ps_stream://")) {
+            val stream = book.bookUrl.removePrefix("radio_ps_stream://").trim()
+            val eps = if (stream.startsWith("http")) {
+                listOf(NovelChapter(index = 0, title = "${book.title} · 24h 实时直播流", url = stream))
+            } else emptyList()
+            return@withContext book.copy(latestChapter = "24h 实时直播") to eps
         }
         if (source.sourceType == NovelSourceType.XIMALAYA_PINGSHU || book.bookUrl.startsWith("ximalaya_album://")) {
             val episodes = fetchXimalayaPingshuEpisodes(source, book)
@@ -236,6 +295,12 @@ class NovelSourceEngine {
             val probeUrl = when {
                 source.sourceType == NovelSourceType.CLASSICS_5000YAN ->
                     "https://sanguo.5000yan.com/"
+                source.sourceType == NovelSourceType.BILIBILI_PINGSHU ->
+                    "https://api.bilibili.com/x/player/pagelist?bvid=BV1HHeC62E4w"
+                source.sourceType == NovelSourceType.TING55_PINGSHU ->
+                    "https://m.ting55.com/paihang/14"
+                source.sourceType == NovelSourceType.RADIO_PINGSHU ->
+                    "https://de1.api.radio-browser.info/json/stations/bycountrycodeexact/CN?limit=3&hidebroken=true"
                 source.sourceType == NovelSourceType.XIMALAYA_PINGSHU ->
                     "https://www.ximalaya.com/revision/category/v2/albums?pageNum=1&pageSize=3&sort=1&categoryId=12"
                 source.sourceType == NovelSourceType.KUWO_PINGSHU ->
@@ -457,6 +522,60 @@ class NovelSourceEngine {
         val url = episode.url.trim()
         if (url.startsWith("http://") || url.startsWith("https://")) return@withContext url
 
+        if (url.startsWith("bili_ps_track://")) {
+            val payload = url.removePrefix("bili_ps_track://").trim()
+            val bvid = payload.substringBefore("/")
+            val cid = payload.substringAfter("/", "")
+            if (bvid.isBlank() || cid.isBlank()) throw IllegalStateException("B站评书分P参数无效")
+            val headers = bilibiliPingshuHeaders(source.headers)
+            val raw = NetworkClient.getString(
+                "https://api.bilibili.com/x/player/playurl?bvid=${URLEncoder.encode(bvid, "UTF-8")}&cid=$cid&fnval=16&otype=json",
+                headers
+            )
+            val dataObj = JSONObject(raw).optJSONObject("data")
+            val audioArr = dataObj?.optJSONObject("dash")?.optJSONArray("audio")
+            if (audioArr != null && audioArr.length() > 0) {
+                val best = (0 until audioArr.length()).mapNotNull { idx ->
+                    val a = audioArr.optJSONObject(idx) ?: return@mapNotNull null
+                    val u = a.optString("baseUrl").ifBlank { a.optString("base_url") }.trim()
+                        .ifBlank { a.optJSONArray("backupUrl")?.optString(0).orEmpty().trim() }
+                    if (u.startsWith("http")) (a.optLong("bandwidth", 0L) to u) else null
+                }.maxByOrNull { it.first }?.second
+                if (!best.isNullOrBlank()) return@withContext best
+            }
+            val durl = dataObj?.optJSONArray("durl")?.optJSONObject(0)?.optString("url").orEmpty().trim()
+            if (durl.startsWith("http")) return@withContext durl
+            throw IllegalStateException("B站评书音频流解析失败")
+        }
+
+        if (url.startsWith("ting55_track://")) {
+            val payload = url.removePrefix("ting55_track://").trim()
+            val bookId = payload.substringBefore("/")
+            val pageNum = payload.substringAfter("/", "1")
+            val epUrl = "https://m.ting55.com/book/$bookId-$pageNum"
+            val mobileUa = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1"
+            val epHtml = NetworkClient.getString(epUrl, mapOf("User-Agent" to mobileUa))
+            val xt = Regex("""name=["']_c["']\s+content=["']([^"']+)["']""").find(epHtml)?.groupValues?.get(1).orEmpty()
+            if (xt.isBlank()) throw IllegalStateException("恋听网音频令牌获取失败")
+            val postBody = "bookId=$bookId&isPay=0&page=$pageNum"
+                .toRequestBody("application/x-www-form-urlencoded; charset=utf-8".toMediaType())
+            val req = Request.Builder()
+                .url("https://m.ting55.com/glink")
+                .header("User-Agent", mobileUa)
+                .header("Referer", epUrl)
+                .header("xt", xt)
+                .header("X-Requested-With", "XMLHttpRequest")
+                .post(postBody)
+                .build()
+            val gJson = NetworkClient.client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                JSONObject(resp.body?.string().orEmpty())
+            }
+            val audio = gJson.optString("url").trim().ifBlank { gJson.optString("ourl").trim() }
+            if (audio.startsWith("http")) return@withContext audio
+            throw IllegalStateException("恋听网该回暂无可用音频流")
+        }
+
         if (url.startsWith("ximalaya_track://")) {
             val trackId = url.removePrefix("ximalaya_track://").trim()
             val raw = executeRequest("https://m.ximalaya.com/tracks/$trackId.json", source)
@@ -479,6 +598,327 @@ class NovelSourceEngine {
         }
 
         throw IllegalStateException("不支持的评书音频协议：$url")
+    }
+
+    // ==================== B站全本分P评书馆 / 恋听网 / 曲艺24h电台适配器 ====================
+
+    @Volatile
+    private var cachedBiliSpiCookie: String = ""
+
+    private fun bilibiliPingshuHeaders(extra: Map<String, String> = emptyMap()): Map<String, String> {
+        val pcUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        if (cachedBiliSpiCookie.isBlank()) {
+            cachedBiliSpiCookie = runCatching {
+                val raw = NetworkClient.getString(
+                    "https://api.bilibili.com/x/frontend/finger/spi",
+                    mapOf("User-Agent" to pcUa, "Referer" to "https://www.bilibili.com/")
+                )
+                val d = JSONObject(raw).optJSONObject("data")
+                val b3 = d?.optString("b_3").orEmpty()
+                val b4 = d?.optString("b_4").orEmpty()
+                if (b3.isNotBlank()) "buvid3=$b3; buvid4=$b4" else ""
+            }.getOrDefault("")
+        }
+        val cookie = cachedBiliSpiCookie.ifBlank { "buvid3=11111111-2222-3333-4444-555555555555infoc" }
+        val base = linkedMapOf(
+            "User-Agent" to pcUa,
+            "Referer" to "https://www.bilibili.com/",
+            "Origin" to "https://www.bilibili.com",
+            "Cookie" to cookie
+        )
+        base.putAll(extra)
+        return base
+    }
+
+    private fun curatedBilibiliPingshuAlbums(source: NovelSource): List<NovelBook> = listOf(
+        NovelBook(
+            id = "bili_BV1HHeC62E4w", sourceId = source.id, sourceName = source.name,
+            title = "白眉大侠（单田芳 · 前200回全本）", author = "单田芳",
+            intro = "单田芳最经典武侠公案评书《白眉大侠》前200回分P无损纯音直连，零 VIP 门槛。",
+            kind = "单田芳", latestChapter = "全 200 回", bookUrl = "bili_ps_album://BV1HHeC62E4w", tocUrl = "bili_ps_album://BV1HHeC62E4w"
+        ),
+        NovelBook(
+            id = "bili_BV1yJe16dEEM", sourceId = source.id, sourceName = source.name,
+            title = "白眉大侠（单田芳 · 后200回完结）", author = "单田芳",
+            intro = "单田芳《白眉大侠》第201~400回全本大结局，分P高音质 DASH 音频秒播。",
+            kind = "单田芳", latestChapter = "全 200 回", bookUrl = "bili_ps_album://BV1yJe16dEEM", tocUrl = "bili_ps_album://BV1yJe16dEEM"
+        ),
+        NovelBook(
+            id = "bili_BV1KxK962E9Q", sourceId = source.id, sourceName = source.name,
+            title = "隋唐演义（单田芳 · 200回全本）", author = "单田芳",
+            intro = "瓦岗寨群雄并起、秦琼程咬金罗成与大唐开国传奇，单老传世代表作。",
+            kind = "单田芳", latestChapter = "全 200 回", bookUrl = "bili_ps_album://BV1KxK962E9Q", tocUrl = "bili_ps_album://BV1KxK962E9Q"
+        ),
+        NovelBook(
+            id = "bili_BV1hRGe62Egb", sourceId = source.id, sourceName = source.name,
+            title = "童林传（单田芳 · 200回经典版）", author = "单田芳",
+            intro = "单田芳武侠巅峰之作《童林传》，柳叶绵丝掌童海川闯荡江湖全200回。",
+            kind = "单田芳", latestChapter = "全 200 回", bookUrl = "bili_ps_album://BV1hRGe62Egb", tocUrl = "bili_ps_album://BV1hRGe62Egb"
+        ),
+        NovelBook(
+            id = "bili_BV1GxYK6xEux", sourceId = source.id, sourceName = source.name,
+            title = "三侠五义（单田芳 · 180回全本）", author = "单田芳",
+            intro = "开封府包青天与展昭、白玉堂、五鼠侠客行侠仗义的经典公案评书。",
+            kind = "单田芳", latestChapter = "全 180 回", bookUrl = "bili_ps_album://BV1GxYK6xEux", tocUrl = "bili_ps_album://BV1GxYK6xEux"
+        ),
+        NovelBook(
+            id = "bili_BV1pc9LBjEqu", sourceId = source.id, sourceName = source.name,
+            title = "三国演义（袁阔成 · 经典全本）", author = "袁阔成",
+            intro = "评书泰斗袁阔成先生代表作《三国演义》，声情并茂、气势磅礴。",
+            kind = "袁阔成", latestChapter = "全 200 回", bookUrl = "bili_ps_album://BV1pc9LBjEqu", tocUrl = "bili_ps_album://BV1pc9LBjEqu"
+        ),
+        NovelBook(
+            id = "bili_BV1Mt411V744", sourceId = source.id, sourceName = source.name,
+            title = "水浒传（田连元 · 118回电视评书）", author = "田连元",
+            intro = "田连元先生经典电视评书《水浒传》，绘声绘色演绎梁山一百零八将传奇。",
+            kind = "田连元", latestChapter = "全 118 回", bookUrl = "bili_ps_album://BV1Mt411V744", tocUrl = "bili_ps_album://BV1Mt411V744"
+        ),
+        NovelBook(
+            id = "bili_BV1FJaS6xEsW", sourceId = source.id, sourceName = source.name,
+            title = "岳飞传（刘兰芳 · 117回全本）", author = "刘兰芳",
+            intro = "著名评书表演艺术家刘兰芳成名作《岳飞传》，精忠报国荡气回肠。",
+            kind = "刘兰芳", latestChapter = "全 117 回", bookUrl = "bili_ps_album://BV1FJaS6xEsW", tocUrl = "bili_ps_album://BV1FJaS6xEsW"
+        ),
+        NovelBook(
+            id = "bili_BV1E64y1u7Pd", sourceId = source.id, sourceName = source.name,
+            title = "东汉演义（连丽如 · 419回全本）", author = "连丽如",
+            intro = "连丽如大师经典长篇《东汉演义》，光武帝刘秀云台二十八将全419回。",
+            kind = "连丽如", latestChapter = "全 419 回", bookUrl = "bili_ps_album://BV1E64y1u7Pd", tocUrl = "bili_ps_album://BV1E64y1u7Pd"
+        ),
+        NovelBook(
+            id = "bili_BV1g4421U7Jf", sourceId = source.id, sourceName = source.name,
+            title = "济公传（郭德纲 · 98回全本无闲白）", author = "郭德纲",
+            intro = "郭德纲经典长篇单口评书《济公传》，包袱密集、娓娓道来全98回。",
+            kind = "郭德纲", latestChapter = "全 98 回", bookUrl = "bili_ps_album://BV1g4421U7Jf", tocUrl = "bili_ps_album://BV1g4421U7Jf"
+        ),
+        NovelBook(
+            id = "bili_BV1aTuBzvETu", sourceId = source.id, sourceName = source.name,
+            title = "水浒全传（王玥波 · 完本评书）", author = "王玥波",
+            intro = "京味评书名家王玥波播讲《水浒全传》，幽默考据兼具。",
+            kind = "王玥波", latestChapter = "全 28 回", bookUrl = "bili_ps_album://BV1aTuBzvETu", tocUrl = "bili_ps_album://BV1aTuBzvETu"
+        ),
+        NovelBook(
+            id = "bili_BV1WTQJYhEm1", sourceId = source.id, sourceName = source.name,
+            title = "张少佐武侠评书精选合集（153回）", author = "张少佐",
+            intro = "评书名家张少佐经典武侠悬疑评书全集，全153回连续畅听。",
+            kind = "张少佐", latestChapter = "全 153 回", bookUrl = "bili_ps_album://BV1WTQJYhEm1", tocUrl = "bili_ps_album://BV1WTQJYhEm1"
+        )
+    )
+
+    private fun fetchBilibiliPingshuExplore(source: NovelSource, categoryUrl: String): List<NovelBook> {
+        val all = curatedBilibiliPingshuAlbums(source)
+        return when (categoryUrl) {
+            "bili_ps://stf" -> all.filter { it.kind == "单田芳" }
+            "bili_ps://classic" -> all.filter { it.kind == "袁阔成" || it.kind == "田连元" }
+            "bili_ps://masters" -> all.filter { it.kind == "刘兰芳" || it.kind == "连丽如" || it.kind == "张少佐" }
+            "bili_ps://modern" -> all.filter { it.kind == "郭德纲" || it.kind == "王玥波" }
+            else -> all
+        }
+    }
+
+    private fun searchBilibiliPingshu(source: NovelSource, keyword: String): List<NovelBook> {
+        val q = keyword.trim()
+        val localMatches = curatedBilibiliPingshuAlbums(source).filter {
+            it.title.contains(q, true) || it.author.contains(q, true) || it.intro.contains(q, true)
+        }
+        val queryWithTag = if (q.contains("评书") || q.contains("相声")) q else "$q 评书"
+        val live = runCatching {
+            val url = "https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=${URLEncoder.encode(queryWithTag, "UTF-8")}&page=1"
+            val raw = NetworkClient.getString(url, bilibiliPingshuHeaders(source.headers))
+            val arr = JSONObject(raw).optJSONObject("data")?.optJSONArray("result") ?: return@runCatching emptyList()
+            (0 until minOf(arr.length(), 15)).mapNotNull { i ->
+                val obj = arr.optJSONObject(i) ?: return@mapNotNull null
+                val bvid = obj.optString("bvid").trim()
+                val title = obj.optString("title").replace(Regex("<[^>]+>"), "").trim()
+                if (bvid.isBlank() || title.isBlank()) return@mapNotNull null
+                val rawPic = obj.optString("pic").trim()
+                val cover = when {
+                    rawPic.startsWith("//") -> "https:$rawPic"
+                    rawPic.startsWith("http://") -> rawPic.replaceFirst("http://", "https://")
+                    else -> rawPic
+                }
+                NovelBook(
+                    id = "bili_$bvid",
+                    sourceId = source.id,
+                    sourceName = source.name,
+                    title = title,
+                    author = obj.optString("author").ifBlank { "B站评书" },
+                    coverUrl = cover,
+                    intro = obj.optString("description").trim().ifBlank { "B站分P评书合集，DASH 纯音直连播放。" },
+                    kind = "B站评书",
+                    latestChapter = obj.optString("duration").ifBlank { "点击查看全集" },
+                    bookUrl = "bili_ps_album://$bvid",
+                    tocUrl = "bili_ps_album://$bvid"
+                )
+            }
+        }.getOrDefault(emptyList())
+        return (localMatches + live).distinctBy { it.bookUrl }
+    }
+
+    private fun fetchBilibiliPingshuEpisodes(source: NovelSource, book: NovelBook): List<NovelChapter> {
+        val bvid = book.bookUrl.removePrefix("bili_ps_album://").trim()
+        val raw = NetworkClient.getString(
+            "https://api.bilibili.com/x/player/pagelist?bvid=${URLEncoder.encode(bvid, "UTF-8")}",
+            bilibiliPingshuHeaders(source.headers)
+        )
+        val arr = JSONObject(raw).optJSONArray("data") ?: return emptyList()
+        val list = mutableListOf<NovelChapter>()
+        for (i in 0 until arr.length()) {
+            val p = arr.optJSONObject(i) ?: continue
+            val cid = p.optLong("cid", 0L)
+            val partTitle = p.optString("part").trim().ifBlank { "第 ${i + 1} 回" }
+            if (cid <= 0L) continue
+            list.add(
+                NovelChapter(
+                    index = list.size,
+                    title = partTitle,
+                    url = "bili_ps_track://$bvid/$cid"
+                )
+            )
+        }
+        return list
+    }
+
+    // ==================== 恋听网评书相声馆 (m.ting55.com) 适配器 ====================
+
+    private fun fetchTing55PingshuExplore(source: NovelSource, categoryUrl: String, page: Int): List<NovelBook> {
+        val mobileUa = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1"
+        val url = if (page <= 1) categoryUrl else "${categoryUrl.trimEnd('/')}/page/$page"
+        val html = NetworkClient.getString(url, mapOf("User-Agent" to mobileUa) + source.headers)
+        return parseTing55BookListHtml(source, html)
+    }
+
+    private fun searchTing55Pingshu(source: NovelSource, keyword: String): List<NovelBook> {
+        val mobileUa = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1"
+        val url = "https://m.ting55.com/search/${URLEncoder.encode(keyword, "UTF-8")}"
+        val html = NetworkClient.getString(url, mapOf("User-Agent" to mobileUa) + source.headers)
+        return parseTing55BookListHtml(source, html)
+    }
+
+    internal fun parseTing55BookListHtml(source: NovelSource, html: String): List<NovelBook> {
+        val doc = Jsoup.parse(html, "https://m.ting55.com/")
+        val items = doc.select("div.clist a[href^=/book/], a[href^=/book/]")
+        val seen = LinkedHashSet<String>()
+        val results = mutableListOf<NovelBook>()
+        for (a in items) {
+            val href = a.attr("href").trim()
+            val bid = Regex("""^/book/(\d+)$""").find(href)?.groupValues?.get(1) ?: continue
+            if (bid in seen) continue
+            val title = a.selectFirst("h3, h4")?.text()?.trim().orEmpty().ifBlank { a.text().trim() }
+            if (title.isBlank()) continue
+            seen.add(bid)
+            val rawImg = a.selectFirst("img")?.attr("src").orEmpty().trim()
+            val cover = when {
+                rawImg.startsWith("//") -> "https:$rawImg"
+                rawImg.startsWith("/") -> "https://m.ting55.com$rawImg"
+                else -> rawImg
+            }
+            val ps = a.select("p").map { it.text().trim() }
+            val narrator = ps.firstOrNull { it.startsWith("播音") }?.substringAfter("：")?.substringAfter(":")?.trim().orEmpty()
+            val author = ps.firstOrNull { it.startsWith("作者") }?.substringAfter("：")?.substringAfter(":")?.trim().orEmpty()
+            val status = ps.firstOrNull { it.startsWith("状态") }?.substringAfter("：")?.substringAfter(":")?.trim().orEmpty()
+            results.add(
+                NovelBook(
+                    id = "ting55_$bid",
+                    sourceId = source.id,
+                    sourceName = source.name,
+                    title = title,
+                    author = narrator.ifBlank { author }.ifBlank { "恋听名家" },
+                    coverUrl = cover,
+                    intro = ps.joinToString(" · ").ifBlank { "恋听网评书相声有声直连。" },
+                    kind = "恋听评书",
+                    latestChapter = status.ifBlank { "免费直连" },
+                    bookUrl = "ting55_book://$bid",
+                    tocUrl = "ting55_book://$bid"
+                )
+            )
+        }
+        return results
+    }
+
+    private fun fetchTing55PingshuEpisodes(source: NovelSource, book: NovelBook): List<NovelChapter> {
+        val bid = book.bookUrl.removePrefix("ting55_book://").trim()
+        val mobileUa = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1"
+        val html = NetworkClient.getString("https://m.ting55.com/book/$bid", mapOf("User-Agent" to mobileUa) + source.headers)
+        val doc = Jsoup.parse(html, "https://m.ting55.com/")
+        val seen = LinkedHashSet<String>()
+        val eps = mutableListOf<NovelChapter>()
+        val epRegex = Regex("""^/book/$bid-(\d+)$""")
+        for (a in doc.select("a[href]")) {
+            val href = a.attr("href").trim()
+            val epNum = epRegex.find(href)?.groupValues?.get(1) ?: continue
+            if (epNum in seen) continue
+            seen.add(epNum)
+            val epTitle = a.text().trim().ifBlank { "第 $epNum 回" }
+            eps.add(
+                NovelChapter(
+                    index = eps.size,
+                    title = epTitle,
+                    url = "ting55_track://$bid/$epNum"
+                )
+            )
+        }
+        return eps.sortedBy { it.url.substringAfterLast("/").toIntOrNull() ?: it.index }
+            .mapIndexed { idx, ch -> ch.copy(index = idx) }
+    }
+
+    // ==================== 曲艺相声 24h 有声电台 (Radio-Browser) 适配器 ====================
+
+    private fun fetchRadioPingshuExplore(source: NovelSource, categoryUrl: String): List<NovelBook> {
+        val base = source.baseUrl.trimEnd('/').ifBlank { "https://de1.api.radio-browser.info/json" }
+        val raw = runCatching {
+            NetworkClient.getString(
+                "$base/stations/bycountrycodeexact/CN?limit=80&order=votes&reverse=true&hidebroken=true",
+                source.headers
+            )
+        }.getOrDefault("[]")
+        val all = parseRadioPingshuStations(source, raw)
+        if (categoryUrl == "radio_ps://quyi") {
+            val quyiKeywords = listOf("评书", "相声", "德云", "故事", "戏曲", "文艺", "曲艺", "广播", "story", "opera", "talk", "news")
+            return all.filter { st ->
+                quyiKeywords.any { k -> st.title.contains(k, true) || st.intro.contains(k, true) }
+            }.ifEmpty { all.take(25) }
+        }
+        return all.take(35)
+    }
+
+    private fun searchRadioPingshu(source: NovelSource, keyword: String): List<NovelBook> {
+        val base = source.baseUrl.trimEnd('/').ifBlank { "https://de1.api.radio-browser.info/json" }
+        val raw = runCatching {
+            NetworkClient.getString(
+                "$base/stations/byname/${URLEncoder.encode(keyword, "UTF-8")}?limit=25&order=votes&reverse=true&hidebroken=true",
+                source.headers
+            )
+        }.getOrDefault("[]")
+        return parseRadioPingshuStations(source, raw)
+    }
+
+    private fun parseRadioPingshuStations(source: NovelSource, rawJson: String): List<NovelBook> {
+        val arr = runCatching { JSONArray(rawJson.trim()) }.getOrNull() ?: return emptyList()
+        val list = mutableListOf<NovelBook>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val name = o.optString("name").trim()
+            val stream = o.optString("url_resolved").ifBlank { o.optString("url") }.trim()
+            if (name.isBlank() || !stream.startsWith("http")) continue
+            val tags = o.optString("tags").split(",").take(3).filter { it.isNotBlank() }.joinToString(" · ")
+            list.add(
+                NovelBook(
+                    id = "radio_ps_${o.optString("stationuuid").ifBlank { i.toString() }}",
+                    sourceId = source.id,
+                    sourceName = source.name,
+                    title = name,
+                    author = o.optString("state").ifBlank { "24h 在线曲艺广播" },
+                    coverUrl = o.optString("favicon").trim(),
+                    intro = tags.ifBlank { "24小时实时有声广播电台，点击即刻收听。" },
+                    kind = "有声电台",
+                    latestChapter = "LIVE 24h",
+                    bookUrl = "radio_ps_stream://$stream",
+                    tocUrl = "radio_ps_stream://$stream"
+                )
+            )
+        }
+        return list.distinctBy { it.bookUrl }
     }
 
     // ==================== 喜马拉雅评书音频源适配器 ====================

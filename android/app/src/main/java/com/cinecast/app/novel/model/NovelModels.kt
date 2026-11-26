@@ -12,11 +12,18 @@ enum class NovelSourceType(val displayName: String, val badge: String) {
     GUTENDEX_API("古登堡世界名著库", "古登堡"),
     LEGADO_JSON("Legado JSON API 书源", "API"),
     LEGADO_HTML("Legado HTML 规则书源", "规则"),
-    XIMALAYA_PINGSHU("喜马拉雅评书音频源", "评书"),
-    KUWO_PINGSHU("酷我评书名家音频源", "评书");
+    BILIBILI_PINGSHU("B站全本分P评书源", "B站评书"),
+    XIMALAYA_PINGSHU("喜马拉雅评书音频源", "喜马拉雅"),
+    KUWO_PINGSHU("酷我评书名家音频源", "酷我评书"),
+    TING55_PINGSHU("恋听网评书相声源", "恋听评书"),
+    RADIO_PINGSHU("曲艺相声24h有声电台", "评书电台");
 
     val isAudioPingshu: Boolean
-        get() = this == XIMALAYA_PINGSHU || this == KUWO_PINGSHU
+        get() = this == BILIBILI_PINGSHU ||
+            this == XIMALAYA_PINGSHU ||
+            this == KUWO_PINGSHU ||
+            this == TING55_PINGSHU ||
+            this == RADIO_PINGSHU
 }
 
 @Serializable
@@ -194,4 +201,12 @@ data class NovelBackupBundle(
     val novelSubscriptions: List<NovelSubscription> = emptyList(),
     val bookshelf: List<BookshelfItem> = emptyList(),
     val readingSettings: NovelReadingSettings = NovelReadingSettings()
+)
+
+@Serializable
+data class PingshuBackupBundle(
+    val version: Int = 1,
+    val exportedAt: Long = System.currentTimeMillis(),
+    val pingshuSources: List<NovelSource> = emptyList(),
+    val pingshuHistory: List<PingshuHistoryItem> = emptyList()
 )

@@ -24,6 +24,29 @@ final class NovelSourceEngine {
                 NovelExploreCategory(title: "国学经典与诗词", url: "yan5000_cat://guoxue")
             ]
         }
+        if source.sourceType == .BILIBILI_PINGSHU {
+            return [
+                NovelExploreCategory(title: "全部名家全本", url: "bili_ps://all"),
+                NovelExploreCategory(title: "单田芳全本", url: "bili_ps://stf"),
+                NovelExploreCategory(title: "袁阔成/田连元", url: "bili_ps://classic"),
+                NovelExploreCategory(title: "刘兰芳/连丽如", url: "bili_ps://masters"),
+                NovelExploreCategory(title: "郭德纲/王玥波", url: "bili_ps://modern")
+            ]
+        }
+        if source.sourceType == .TING55_PINGSHU {
+            return [
+                NovelExploreCategory(title: "评书人气榜", url: "https://m.ting55.com/paihang/14"),
+                NovelExploreCategory(title: "评书最新", url: "https://m.ting55.com/category/14"),
+                NovelExploreCategory(title: "相声小品", url: "https://m.ting55.com/paihang/12"),
+                NovelExploreCategory(title: "百家讲坛", url: "https://m.ting55.com/paihang/13")
+            ]
+        }
+        if source.sourceType == .RADIO_PINGSHU {
+            return [
+                NovelExploreCategory(title: "曲艺相声故事台", url: "radio_ps://quyi"),
+                NovelExploreCategory(title: "全国热门有声台", url: "radio_ps://cn")
+            ]
+        }
         if source.sourceType == .XIMALAYA_PINGSHU {
             return [
                 NovelExploreCategory(title: "热门免费评书", url: "xm_cat://hot"),
@@ -86,6 +109,16 @@ final class NovelSourceEngine {
         if source.sourceType == .CLASSICS_5000YAN {
             return page > 1 ? [] : curated5000yanBooks(source: source, categoryUrl: categoryUrl)
         }
+        if source.sourceType == .BILIBILI_PINGSHU {
+            return page > 1 ? [] : curatedBilibiliPingshu(source: source, categoryUrl: categoryUrl)
+        }
+        if source.sourceType == .TING55_PINGSHU {
+            let raw = try await fetchText(urlSpec: categoryUrl, source: source)
+            return parseTing55Books(source: source, html: raw)
+        }
+        if source.sourceType == .RADIO_PINGSHU {
+            return await fetchRadioPingshu(source: source)
+        }
         if source.sourceType == .XIMALAYA_PINGSHU {
             return await fetchXimalayaPingshuExplore(source: source, categoryUrl: categoryUrl, page: page)
         }
@@ -134,6 +167,18 @@ final class NovelSourceEngine {
             var updated = book
             updated.latestChapter = chs.last?.title ?? "全本典藏"
             return (updated, chs)
+        }
+        if source.sourceType == .BILIBILI_PINGSHU || book.bookUrl.hasPrefix("bili_ps_album://") {
+            let eps = await fetchBilibiliPingshuEpisodes(source: source, book: book)
+            return (book, eps)
+        }
+        if source.sourceType == .TING55_PINGSHU || book.bookUrl.hasPrefix("ting55_book://") {
+            let eps = await fetchTing55Episodes(source: source, book: book)
+            return (book, eps)
+        }
+        if source.sourceType == .RADIO_PINGSHU || book.bookUrl.hasPrefix("radio_ps_stream://") {
+            let stream = String(book.bookUrl.dropFirst("radio_ps_stream://".count))
+            return (book, [NovelChapter(index: 0, title: "\(book.title) · 24h 实时广播", url: stream)])
         }
         if source.sourceType == .XIMALAYA_PINGSHU || book.bookUrl.hasPrefix("ximalaya_album://") {
             let eps = await fetchXimalayaPingshuEpisodes(source: source, book: book)
@@ -239,6 +284,48 @@ final class NovelSourceEngine {
     func resolvePingshuAudioUrl(source: NovelSource, episode: NovelChapter) async throws -> String {
         let url = episode.url.trimmingCharacters(in: .whitespacesAndNewlines)
         if url.hasPrefix("http") { return url }
+        if url.hasPrefix("bili_ps_track://") {
+            let parts = String(url.dropFirst("bili_ps_track://".count)).split(separator: "/")
+            if parts.count == 2 {
+                let raw = try await NetworkService.shared.fetchString(
+                    url: "https://api.bilibili.com/x/player/playurl?bvid=\(parts[0])&cid=\(parts[1])&fnval=16&otype=json",
+                    headers: MusicSourceEngine.bilibiliHeaders
+                )
+                if let data = raw.data(using: .utf8),
+                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let d = obj["data"] as? [String: Any],
+                   let dash = d["dash"] as? [String: Any],
+                   let audios = dash["audio"] as? [[String: Any]],
+                   let best = audios.max(by: { ($0["bandwidth"] as? Int ?? 0) < ($1["bandwidth"] as? Int ?? 0) }),
+                   let u = (best["baseUrl"] as? String) ?? (best["base_url"] as? String) {
+                    return u
+                }
+            }
+        }
+        if url.hasPrefix("ting55_track://") {
+            let parts = String(url.dropFirst("ting55_track://".count)).split(separator: "/")
+            if parts.count == 2 {
+                let epUrl = "https://m.ting55.com/book/\(parts[0])-\(parts[1])"
+                let html = try await NetworkService.shared.fetchString(url: epUrl)
+                if let r = try? NSRegularExpression(pattern: #"name=["']_c["']\s+content=["']([^"']+)["']"#),
+                   let m = r.firstMatch(in: html, range: NSRange(location: 0, length: (html as NSString).length)),
+                   m.numberOfRanges >= 2 {
+                    let xt = (html as NSString).substring(with: m.range(at: 1))
+                    var req = URLRequest(url: URL(string: "https://m.ting55.com/glink")!)
+                    req.httpMethod = "POST"
+                    req.httpBody = "bookId=\(parts[0])&isPay=0&page=\(parts[1])".data(using: .utf8)
+                    req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+                    req.setValue(xt, forHTTPHeaderField: "xt")
+                    req.setValue(epUrl, forHTTPHeaderField: "Referer")
+                    req.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
+                    let (data, _) = try await NetworkService.shared.session.data(for: req)
+                    if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        let u = (obj["url"] as? String ?? "").isEmpty ? (obj["ourl"] as? String ?? "") : (obj["url"] as? String ?? "")
+                        if u.hasPrefix("http") { return u }
+                    }
+                }
+            }
+        }
         if url.hasPrefix("ximalaya_track://") {
             let tid = String(url.dropFirst("ximalaya_track://".count))
             let raw = try await fetchText(urlSpec: "https://m.ximalaya.com/tracks/\(tid).json", source: source)
@@ -900,5 +987,81 @@ final class NovelSourceEngine {
             return extractReadableHtmlContent(inner)
         }
         return extractReadableHtmlContent(html)
+    }
+
+    private func curatedBilibiliPingshu(source: NovelSource, categoryUrl: String) -> [NovelBook] {
+        let all: [(cat: String, bvid: String, title: String, author: String, hint: String)] = [
+            ("bili_ps://stf", "BV1HHeC62E4w", "白眉大侠（单田芳 · 前200回全本）", "单田芳", "全 200 回"),
+            ("bili_ps://stf", "BV1yJe16dEEM", "白眉大侠（单田芳 · 后200回完结）", "单田芳", "全 200 回"),
+            ("bili_ps://stf", "BV1KxK962E9Q", "隋唐演义（单田芳 · 200回全本）", "单田芳", "全 200 回"),
+            ("bili_ps://stf", "BV1hRGe62Egb", "童林传（单田芳 · 200回经典版）", "单田芳", "全 200 回"),
+            ("bili_ps://stf", "BV1GxYK6xEux", "三侠五义（单田芳 · 180回全本）", "单田芳", "全 180 回"),
+            ("bili_ps://classic", "BV1pc9LBjEqu", "三国演义（袁阔成 · 经典全本）", "袁阔成", "全 200 回"),
+            ("bili_ps://classic", "BV1Mt411V744", "水浒传（田连元 · 118回电视评书）", "田连元", "全 118 回"),
+            ("bili_ps://masters", "BV1FJaS6xEsW", "岳飞传（刘兰芳 · 117回全本）", "刘兰芳", "全 117 回"),
+            ("bili_ps://masters", "BV1E64y1u7Pd", "东汉演义（连丽如 · 419回全本）", "连丽如", "全 419 回"),
+            ("bili_ps://modern", "BV1g4421U7Jf", "济公传（郭德纲 · 98回无闲白）", "郭德纲", "全 98 回"),
+            ("bili_ps://modern", "BV1aTuBzvETu", "水浒全传（王玥波 · 完本评书）", "王玥波", "全 28 回"),
+            ("bili_ps://masters", "BV1WTQJYhEm1", "张少佐武侠评书合集（153回）", "张少佐", "全 153 回")
+        ]
+        let list = categoryUrl == "bili_ps://all" ? all : all.filter { $0.cat == categoryUrl }
+        return list.map { e in
+            NovelBook(id: "bili_\(e.bvid)", sourceId: source.id, sourceName: source.name, title: e.title, author: e.author, intro: "B站分P全本评书纯音直连。", kind: e.author, latestChapter: e.hint, bookUrl: "bili_ps_album://\(e.bvid)", tocUrl: "bili_ps_album://\(e.bvid)")
+        }
+    }
+
+    private func fetchBilibiliPingshuEpisodes(source: NovelSource, book: NovelBook) async -> [NovelChapter] {
+        let bvid = String(book.bookUrl.dropFirst("bili_ps_album://".count))
+        guard let raw = try? await NetworkService.shared.fetchString(url: "https://api.bilibili.com/x/player/pagelist?bvid=\(bvid)", headers: MusicSourceEngine.bilibiliHeaders),
+              let data = raw.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arr = obj["data"] as? [[String: Any]] else { return [] }
+        return arr.enumerated().compactMap { idx, p in
+            guard let cid = p["cid"] as? Int64 else { return nil }
+            let title = (p["part"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return NovelChapter(index: idx, title: title.isEmpty ? "第 \(idx + 1) 回" : title, url: "bili_ps_track://\(bvid)/\(cid)")
+        }
+    }
+
+    private func parseTing55Books(source: NovelSource, html: String) -> [NovelBook] {
+        guard let regex = try? NSRegularExpression(pattern: #"<a[^>]+href=["']/book/(\d+)["'][^>]*>[\s\S]*?<h3>([\s\S]*?)</h3>"#, options: [.caseInsensitive]) else { return [] }
+        let ns = html as NSString
+        var seen = Set<String>()
+        var out: [NovelBook] = []
+        for m in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) where m.numberOfRanges >= 3 {
+            let bid = ns.substring(with: m.range(at: 1))
+            let title = stripHtmlTags(ns.substring(with: m.range(at: 2))).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty, seen.insert(bid).inserted else { continue }
+            out.append(NovelBook(id: "ting55_\(bid)", sourceId: source.id, sourceName: source.name, title: title, author: "恋听名家", intro: "恋听网评书相声有声直连。", kind: "恋听评书", latestChapter: "免费直连", bookUrl: "ting55_book://\(bid)", tocUrl: "ting55_book://\(bid)"))
+        }
+        return out
+    }
+
+    private func fetchTing55Episodes(source: NovelSource, book: NovelBook) async -> [NovelChapter] {
+        let bid = String(book.bookUrl.dropFirst("ting55_book://".count))
+        guard let html = try? await NetworkService.shared.fetchString(url: "https://m.ting55.com/book/\(bid)"),
+              let regex = try? NSRegularExpression(pattern: #"<a[^>]+href=["']/book/\(bid)-(\d+)["'][^>]*>([\s\S]*?)</a>"#) else { return [] }
+        let ns = html as NSString
+        var seen = Set<String>()
+        var out: [NovelChapter] = []
+        for m in regex.matches(in: html, range: NSRange(location: 0, length: ns.length)) where m.numberOfRanges >= 3 {
+            let num = ns.substring(with: m.range(at: 1))
+            guard seen.insert(num).inserted else { continue }
+            let title = stripHtmlTags(ns.substring(with: m.range(at: 2))).trimmingCharacters(in: .whitespacesAndNewlines)
+            out.append(NovelChapter(index: Int(num) ?? out.count, title: title.isEmpty ? "第 \(num) 回" : title, url: "ting55_track://\(bid)/\(num)"))
+        }
+        return out.sorted { $0.index < $1.index }
+    }
+
+    private func fetchRadioPingshu(source: NovelSource) async -> [NovelBook] {
+        guard let raw = try? await NetworkService.shared.fetchString(url: "https://de1.api.radio-browser.info/json/stations/bycountrycodeexact/CN?limit=50&order=votes&reverse=true&hidebroken=true"),
+              let data = raw.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+        return arr.compactMap { o in
+            let name = (o["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let stream = (o["url_resolved"] as? String ?? o["url"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, stream.hasPrefix("http") else { return nil }
+            return NovelBook(id: "radio_ps_\(stream.hashValue)", sourceId: source.id, sourceName: source.name, title: name, author: "24h 曲艺有声电台", intro: "24小时实时有声广播电台。", kind: "有声电台", latestChapter: "LIVE 24h", bookUrl: "radio_ps_stream://\(stream)", tocUrl: "radio_ps_stream://\(stream)")
+        }
     }
 }

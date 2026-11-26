@@ -257,12 +257,28 @@ class MusicSourceEngine {
 
     // ==================== Protocol Implementations ====================
 
+    @Volatile
+    private var cachedBiliSpiCookie: String = ""
+
     private fun bilibiliHeaders(extra: Map<String, String>): Map<String, String> {
+        val pcUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        if (cachedBiliSpiCookie.isBlank()) {
+            cachedBiliSpiCookie = runCatching {
+                val raw = NetworkClient.getString(
+                    "https://api.bilibili.com/x/frontend/finger/spi",
+                    mapOf("User-Agent" to pcUa, "Referer" to "https://www.bilibili.com/")
+                )
+                val d = JSONObject(raw).optJSONObject("data")
+                val b3 = d?.optString("b_3").orEmpty()
+                val b4 = d?.optString("b_4").orEmpty()
+                if (b3.isNotBlank()) "buvid3=$b3; buvid4=$b4" else ""
+            }.getOrDefault("")
+        }
         val base = linkedMapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "User-Agent" to pcUa,
             "Referer" to "https://www.bilibili.com/",
             "Origin" to "https://www.bilibili.com",
-            "Cookie" to "buvid3=11111111-2222-3333-4444-555555555555infoc"
+            "Cookie" to cachedBiliSpiCookie.ifBlank { "buvid3=11111111-2222-3333-4444-555555555555infoc" }
         )
         base.putAll(extra)
         return base

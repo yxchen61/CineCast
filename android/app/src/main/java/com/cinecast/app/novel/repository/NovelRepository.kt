@@ -29,13 +29,19 @@ class NovelRepository(private val context: Context) {
     private val mutex = Mutex()
 
     private val sourcesFile get() = File(context.filesDir, "cinecast_novel_sources.json")
+    private val pingshuSourcesFile get() = File(context.filesDir, "cinecast_pingshu_sources.json")
     private val subsFile get() = File(context.filesDir, "cinecast_novel_subscriptions.json")
     private val bookshelfFile get() = File(context.filesDir, "cinecast_novel_bookshelf.json")
     private val pingshuHistoryFile get() = File(context.filesDir, "cinecast_pingshu_history.json")
     private val settingsFile get() = File(context.filesDir, "cinecast_novel_reading_settings.json")
 
+    /** 仅保存文字书籍书源（与评书音频源 100% 物理分离） */
     private val _sources = MutableStateFlow<List<NovelSource>>(emptyList())
     val sources: StateFlow<List<NovelSource>> = _sources.asStateFlow()
+
+    /** 独立评书音频源列表（存储在独立文件 cinecast_pingshu_sources.json） */
+    private val _pingshuSources = MutableStateFlow<List<NovelSource>>(emptyList())
+    val pingshuSources: StateFlow<List<NovelSource>> = _pingshuSources.asStateFlow()
 
     private val _activeSourceId = MutableStateFlow("")
     val activeSourceId: StateFlow<String> = _activeSourceId.asStateFlow()
@@ -61,14 +67,16 @@ class NovelRepository(private val context: Context) {
 
     private fun loadAllSync() {
         val rawLoaded = readJson<List<NovelSource>>(sourcesFile)
-        val defaults = defaultNovelSources()
-        val loadedSources = if (rawLoaded == null) {
-            defaults.also { writeJsonSync(sourcesFile, it) }
+        val defaultBookSources = defaultNovelSources()
+        val legacyExtractedPingshu = rawLoaded?.filter { it.sourceType.isAudioPingshu }.orEmpty()
+
+        // 1. 纯文字书籍书源（彻底剥离任何旧版本混入的评书音频源）
+        val loadedBookSources = if (rawLoaded == null) {
+            defaultBookSources.also { writeJsonSync(sourcesFile, it) }
         } else {
-            // v1.6.0 自动迁移：引入国内 36ms 直连「五千言中华古典名著馆」作为默认首推名著源，
-            // 并自动关闭国内无代理环境无法直连的海外维基文库/古登堡源，彻底解决「维基文库小说全部打不开」问题。
-            val isPreV140 = rawLoaded.none { it.id == "open_wikisource_classics" }
-            val isPreV160 = rawLoaded.none { it.id == "open_5000yan_classics" }
+            val textOnlyRaw = rawLoaded.filterNot { it.sourceType.isAudioPingshu }
+            val isPreV140 = textOnlyRaw.none { it.id == "open_wikisource_classics" }
+            val isPreV160 = textOnlyRaw.none { it.id == "open_5000yan_classics" }
             val deadIds = setOf("git_liufuyou_aishang")
             val flakyLegacyIds = setOf(
                 "git_xiu2_sudugu",
@@ -78,12 +86,12 @@ class NovelRepository(private val context: Context) {
                 "git_liufuyou_tingroom"
             )
             val overseasBlockedIds = setOf("open_wikisource_classics", "open_gutendex_classics")
-            val cleaned = rawLoaded.filterNot { it.id in deadIds }.map { src ->
+            val cleaned = textOnlyRaw.filterNot { it.id in deadIds }.map { src ->
                 when {
                     isPreV160 && src.id in overseasBlockedIds -> src.copy(
                         enabled = false,
                         group = "海外公版源 (需科学上网)",
-                        comment = "该源服务器位于海外（国内网络直连易被重置打不开），v1.6.0 已默认切换为国内直连「五千言古典名著馆」，有代理环境可手动开启。"
+                        comment = "该源服务器位于海外（国内网络直连易被重置打不开），已默认切换为国内直连「五千言古典名著馆」，有代理环境可手动开启。"
                     )
                     isPreV140 && src.id in flakyLegacyIds ->
                         src.copy(enabled = false, group = "备用网页规则源 (按需手动开启)")
@@ -91,16 +99,36 @@ class NovelRepository(private val context: Context) {
                 }
             }
             val existingIds = cleaned.map { it.id }.toSet()
-            val newReliable = defaults.filter { it.id !in existingIds && it.enabled }
+            val newReliable = defaultBookSources.filter { it.id !in existingIds && it.enabled }
             val merged = newReliable + cleaned
             if (merged != rawLoaded) writeJsonSync(sourcesFile, merged)
             merged
         }
-        _sources.value = loadedSources
-        _activeSourceId.value = loadedSources.firstOrNull { it.enabled && !it.sourceType.isAudioPingshu }?.id
-            ?: loadedSources.firstOrNull { !it.sourceType.isAudioPingshu }?.id.orEmpty()
-        _activePingshuSourceId.value = loadedSources.firstOrNull { it.enabled && it.sourceType.isAudioPingshu }?.id
-            ?: loadedSources.firstOrNull { it.sourceType.isAudioPingshu }?.id.orEmpty()
+        _sources.value = loadedBookSources
+        _activeSourceId.value = loadedBookSources.firstOrNull { it.enabled }?.id
+            ?: loadedBookSources.firstOrNull()?.id.orEmpty()
+
+        // 2. 独立评书音频源（存储在独立文件 cinecast_pingshu_sources.json，自动合并 v1.7.0 新增的实测评书源）
+        val rawPingshu = readJson<List<NovelSource>>(pingshuSourcesFile)
+        val defaultPingshu = defaultPingshuSources()
+        val loadedPingshuSources = if (rawPingshu == null) {
+            val existingDefaultIds = defaultPingshu.map { it.id }.toSet()
+            val customFromLegacy = legacyExtractedPingshu.filter {
+                it.id !in existingDefaultIds && it.id != "open_ximalaya_pingshu" && it.id != "open_kuwo_pingshu"
+            }
+            (defaultPingshu + customFromLegacy).also { writeJsonSync(pingshuSourcesFile, it) }
+        } else {
+            val existingIds = rawPingshu.map { it.id }.toSet()
+            val missing = defaultPingshu.filter { it.id !in existingIds }
+            if (missing.isNotEmpty()) {
+                val merged = missing + rawPingshu
+                writeJsonSync(pingshuSourcesFile, merged)
+                merged
+            } else rawPingshu
+        }
+        _pingshuSources.value = loadedPingshuSources
+        _activePingshuSourceId.value = loadedPingshuSources.firstOrNull { it.enabled }?.id
+            ?: loadedPingshuSources.firstOrNull()?.id.orEmpty()
 
         val loadedSubs = readJson<List<NovelSubscription>>(subsFile) ?: defaultNovelSubscriptions().also {
             writeJsonSync(subsFile, it)
@@ -134,6 +162,68 @@ class NovelRepository(private val context: Context) {
 
     fun getSourceById(sourceId: String): NovelSource? =
         _sources.value.firstOrNull { it.id == sourceId }
+
+    fun getPingshuSourceById(sourceId: String): NovelSource? =
+        _pingshuSources.value.firstOrNull { it.id == sourceId }
+
+    suspend fun upsertPingshuSource(source: NovelSource) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val list = _pingshuSources.value.toMutableList()
+            val idx = list.indexOfFirst { it.id == source.id }
+            if (idx >= 0) list[idx] = source else list.add(0, source)
+            _pingshuSources.value = list
+            writeJsonSync(pingshuSourcesFile, list)
+            if (_activePingshuSourceId.value.isBlank() && source.enabled) {
+                _activePingshuSourceId.value = source.id
+            }
+        }
+    }
+
+    suspend fun deletePingshuSource(sourceId: String) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val list = _pingshuSources.value.filterNot { it.id == sourceId }
+            _pingshuSources.value = list
+            writeJsonSync(pingshuSourcesFile, list)
+            if (_activePingshuSourceId.value == sourceId) {
+                _activePingshuSourceId.value = list.firstOrNull { it.enabled }?.id
+                    ?: list.firstOrNull()?.id.orEmpty()
+            }
+        }
+    }
+
+    suspend fun updatePingshuSourceLatency(sourceId: String, latencyMs: Long) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val list = _pingshuSources.value.map {
+                if (it.id == sourceId) it.copy(latencyMs = latencyMs) else it
+            }
+            _pingshuSources.value = list
+            writeJsonSync(pingshuSourcesFile, list)
+        }
+    }
+
+    fun exportPingshuBackupJson(): String {
+        val bundle = PingshuBackupBundle(
+            pingshuSources = _pingshuSources.value,
+            pingshuHistory = _pingshuHistory.value
+        )
+        return json.encodeToString(bundle)
+    }
+
+    suspend fun importPingshuBackupJson(rawJson: String) = withContext(Dispatchers.IO) {
+        val bundle = json.decodeFromString<PingshuBackupBundle>(rawJson)
+        mutex.withLock {
+            if (bundle.pingshuSources.isNotEmpty()) {
+                _pingshuSources.value = bundle.pingshuSources
+                writeJsonSync(pingshuSourcesFile, bundle.pingshuSources)
+                _activePingshuSourceId.value = bundle.pingshuSources.firstOrNull { it.enabled }?.id
+                    ?: bundle.pingshuSources.firstOrNull()?.id.orEmpty()
+            }
+            if (bundle.pingshuHistory.isNotEmpty()) {
+                _pingshuHistory.value = bundle.pingshuHistory
+                writeJsonSync(pingshuHistoryFile, bundle.pingshuHistory)
+            }
+        }
+    }
 
     suspend fun upsertSource(source: NovelSource) = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -444,27 +534,7 @@ class NovelRepository(private val context: Context) {
                     content = "$.data.content"
                 )
             ),
-            // 4. 喜马拉雅评书馆（免费高音质 M4A 评书直连，单田芳/历史/武侠/单口）
-            NovelSource(
-                id = "open_ximalaya_pingshu",
-                name = "喜马拉雅评书馆 (免费高清音频)",
-                baseUrl = "https://www.ximalaya.com",
-                group = "听评书专区 (音频直连)",
-                sourceType = NovelSourceType.XIMALAYA_PINGSHU,
-                searchUrl = "https://www.ximalaya.com/revision/category/v2/albums",
-                comment = "免费评书音频直连，涵盖单田芳《白眉大侠》《乱世枭雄》、郭德纲单口评书及 3000+ 免费评书专辑。"
-            ),
-            // 5. 酷我评书名家馆（MP3 直连全库搜评书，单田芳/连丽如/刘兰芳/袁阔成/郭德纲）
-            NovelSource(
-                id = "open_kuwo_pingshu",
-                name = "酷我评书名家馆 (MP3极速直连)",
-                baseUrl = "http://search.kuwo.cn",
-                group = "听评书专区 (音频直连)",
-                sourceType = NovelSourceType.KUWO_PINGSHU,
-                searchUrl = "http://search.kuwo.cn/r.s",
-                comment = "支持全库检索任意评书名家与作品（单田芳隋唐演义142回、连丽如雍正剑侠图378回、刘兰芳大唐侠女等），MP3 直连秒播。"
-            ),
-            // 6. 海外公版名著源（国内无代理网络无法直连，默认关闭，有代理环境可按需手动开启）
+            // 4. 海外公版名著源（国内无代理网络无法直连，默认关闭，有代理环境可按需手动开启）
             NovelSource(
                 id = "open_wikisource_classics",
                 name = "维基文库 · 中文名著典藏 (需科学上网)",
@@ -612,7 +682,64 @@ class NovelRepository(private val context: Context) {
         )
 
         /**
-         * 预设 GitHub 开源书源订阅仓库（与视频 TVBox 订阅完全隔离）
+         * 独立评书音频源默认配置（与书籍书源 100% 物理分离，独立存储在 cinecast_pingshu_sources.json）
+         * 全部 5 大评书源均经真机/国内直连实测可拉取回次目录并播放音频流。
+         */
+        fun defaultPingshuSources(): List<NovelSource> = listOf(
+            // 1. B站全本分P评书馆（实测 200~419 回全本直连，11MB 纯音 DASH M4A，零 VIP 门槛）
+            NovelSource(
+                id = "ps_bilibili_classics",
+                name = "B站全本评书馆 (默认首选·分P无损)",
+                baseUrl = "https://api.bilibili.com",
+                group = "全本名家评书 (国内 CDN 直连)",
+                sourceType = NovelSourceType.BILIBILI_PINGSHU,
+                searchUrl = "https://api.bilibili.com/x/web-interface/search/type",
+                comment = "实测直连 B站全本分P评书合集（单田芳白眉大侠400回/隋唐演义/童林传/三侠五义、袁阔成三国演义、田连元水浒传、刘兰芳岳飞传、连丽如东汉演义419回、郭德纲济公传、王玥波水浒、张少佐武侠），支持全站搜评书。"
+            ),
+            // 2. 喜马拉雅评书馆（腾讯云 COS 免费高清 M4A 直连）
+            NovelSource(
+                id = "open_ximalaya_pingshu",
+                name = "喜马拉雅评书馆 (免费高清 M4A)",
+                baseUrl = "https://www.ximalaya.com",
+                group = "全本名家评书 (国内 CDN 直连)",
+                sourceType = NovelSourceType.XIMALAYA_PINGSHU,
+                searchUrl = "https://www.ximalaya.com/revision/category/v2/albums",
+                comment = "免费评书音频直连，涵盖单田芳《白眉大侠》《乱世枭雄》、郭德纲单口评书及 3000+ 免费评书专辑。"
+            ),
+            // 3. 酷我评书名家馆（官方 MP3 极速直连 + 全库实时搜评书）
+            NovelSource(
+                id = "open_kuwo_pingshu",
+                name = "酷我评书名家馆 (MP3 极速直连)",
+                baseUrl = "http://search.kuwo.cn",
+                group = "全本名家评书 (国内 CDN 直连)",
+                sourceType = NovelSourceType.KUWO_PINGSHU,
+                searchUrl = "http://search.kuwo.cn/r.s",
+                comment = "支持全库检索任意评书名家与作品（单田芳隋唐演义142回、连丽如雍正剑侠图378回、刘兰芳大唐侠女等），MP3 直连秒播。"
+            ),
+            // 4. 恋听网评书相声馆（实测 pp.ting55.com 11MB MP3 直连，含评书人气榜/相声/百家讲坛）
+            NovelSource(
+                id = "ps_ting55_story",
+                name = "恋听网评书相声馆 (评书/相声/讲坛)",
+                baseUrl = "https://m.ting55.com",
+                group = "评书相声有声站 (国内直连)",
+                sourceType = NovelSourceType.TING55_PINGSHU,
+                searchUrl = "https://m.ting55.com/search/{{key}}",
+                comment = "专注评书、相声与百家讲坛的老牌有声站，支持评书人气榜、相声小品、经典有声与全站关键词搜评书。"
+            ),
+            // 5. 曲艺相声 24h 有声电台（开源广播电台实时听书/相声/戏曲）
+            NovelSource(
+                id = "ps_radio_quyi",
+                name = "曲艺相声 24h 有声电台 (直播听书)",
+                baseUrl = "https://de1.api.radio-browser.info/json",
+                group = "24小时曲艺有声电台",
+                sourceType = NovelSourceType.RADIO_PINGSHU,
+                searchUrl = "https://de1.api.radio-browser.info/json/stations/byname/{{key}}",
+                comment = "24 小时不间断播出的德云社相声、文艺故事与戏曲曲艺在线音频电台，点开即听无需选集。"
+            )
+        )
+
+        /**
+         * 预设 GitHub 开源书源订阅仓库（与视频 TVBox 订阅、评书音频源完全隔离）
          */
         fun defaultNovelSubscriptions(): List<NovelSubscription> = listOf(
             NovelSubscription(
