@@ -156,5 +156,12 @@ class MusicEngineUnitTest {
         assertEquals(270_000L, MusicSourceEngine.parseColonDurationToMs("4:30"))
         assertEquals(3_665_000L, MusicSourceEngine.parseColonDurationToMs("1:01:05"))
         assertEquals("周杰伦《晴天》无损", MusicSourceEngine.stripHtmlEntities("<em class=\"keyword\">周杰伦</em>《晴天》无损"))
+
+        // Verify Bilibili music is completely removed from default music sources & 320K full sources are present
+        val defaults = com.cinecast.app.music.repository.MusicRepository.defaultMusicSources()
+        assertTrue(defaults.none { it.sourceType == MusicSourceType.BILIBILI_MUSIC })
+        assertEquals("fast_qijieya_meting", defaults.first().id)
+        assertTrue(defaults.any { it.id == "fast_imeto_meting" })
+        assertTrue(defaults.any { it.id == "git_gdstudio_joox" && it.platform == "joox" })
     }
 }

@@ -228,15 +228,15 @@ class MusicViewModel : ViewModel() {
             val all = getEnabledSources().filter { it.searchable }
             // Prioritize GDStudio & Audius for full catalog search
             val prioritized = all.sortedBy {
-                when (it.sourceType) {
-                    MusicSourceType.BILIBILI_MUSIC -> 0
-                    MusicSourceType.METING_API -> 1
-                    MusicSourceType.KUWO_DIRECT -> 2
-                    MusicSourceType.GDSTUDIO_API -> 3
-                    MusicSourceType.AUDIUS_API -> 4
-                    MusicSourceType.VKEYS_API -> 5
-                    MusicSourceType.RADIO_BROWSER -> 6
-                    MusicSourceType.M3U_AUDIO -> 7
+                when {
+                    it.sourceType == MusicSourceType.KUWO_DIRECT -> 0
+                    it.sourceType == MusicSourceType.GDSTUDIO_API && it.platform == "joox" -> 1
+                    it.sourceType == MusicSourceType.METING_API -> 2
+                    it.sourceType == MusicSourceType.GDSTUDIO_API -> 3
+                    it.sourceType == MusicSourceType.AUDIUS_API -> 4
+                    it.sourceType == MusicSourceType.VKEYS_API -> 5
+                    it.sourceType == MusicSourceType.RADIO_BROWSER -> 6
+                    else -> 7
                 }
             }
             (listOfNotNull(active?.takeIf { it.searchable }) + prioritized).distinctBy { it.id }.take(8)
@@ -300,15 +300,15 @@ class MusicViewModel : ViewModel() {
         val name = artistName.trim()
         if (name.isBlank()) return
         val targets = getEnabledSources().filter { it.searchable }.sortedBy {
-            when (it.sourceType) {
-                MusicSourceType.BILIBILI_MUSIC -> 0
-                MusicSourceType.METING_API -> 1
-                MusicSourceType.KUWO_DIRECT -> 2
-                MusicSourceType.GDSTUDIO_API -> 3
-                MusicSourceType.AUDIUS_API -> 4
-                MusicSourceType.VKEYS_API -> 5
-                MusicSourceType.RADIO_BROWSER -> 6
-                MusicSourceType.M3U_AUDIO -> 7
+            when {
+                it.sourceType == MusicSourceType.KUWO_DIRECT -> 0
+                it.sourceType == MusicSourceType.GDSTUDIO_API && it.platform == "joox" -> 1
+                it.sourceType == MusicSourceType.METING_API -> 2
+                it.sourceType == MusicSourceType.GDSTUDIO_API -> 3
+                it.sourceType == MusicSourceType.AUDIUS_API -> 4
+                it.sourceType == MusicSourceType.VKEYS_API -> 5
+                it.sourceType == MusicSourceType.RADIO_BROWSER -> 6
+                else -> 7
             }
         }.take(6)
 
@@ -453,7 +453,7 @@ class MusicViewModel : ViewModel() {
             )
             try {
                 // Step 1: Resolve audio URL ONLY and start ExoPlayer IMMEDIATELY (non-blocking)
-                val resolved = withTimeoutOrNull(9000L) {
+                val resolved = withTimeoutOrNull(12000L) {
                     musicEngine.resolveStreamUrlFast(
                         source = source,
                         track = track,
@@ -552,13 +552,13 @@ class MusicViewModel : ViewModel() {
                     it.sourceType != MusicSourceType.M3U_AUDIO
             }
             .sortedBy {
-                when (it.sourceType) {
-                    MusicSourceType.BILIBILI_MUSIC -> 0
-                    MusicSourceType.METING_API -> 1
-                    MusicSourceType.KUWO_DIRECT -> 2
-                    MusicSourceType.GDSTUDIO_API -> 3
-                    MusicSourceType.AUDIUS_API -> 4
-                    MusicSourceType.VKEYS_API -> 5
+                when {
+                    it.sourceType == MusicSourceType.KUWO_DIRECT -> 0
+                    it.sourceType == MusicSourceType.GDSTUDIO_API && it.platform == "joox" -> 1
+                    it.sourceType == MusicSourceType.METING_API -> 2
+                    it.sourceType == MusicSourceType.GDSTUDIO_API -> 3
+                    it.sourceType == MusicSourceType.AUDIUS_API -> 4
+                    it.sourceType == MusicSourceType.VKEYS_API -> 5
                     else -> 6
                 }
             }
@@ -575,18 +575,18 @@ class MusicViewModel : ViewModel() {
 
             for (altSource in remainingSources) {
                 triedSourceIdsForCurrentTrack.add(altSource.id)
-                val found = withTimeoutOrNull(6500L) {
+                val found = withTimeoutOrNull(9000L) {
                     runCatching { musicEngine.search(altSource, queryWithArtist, 1) }.getOrDefault(emptyList())
                 }.orEmpty().ifEmpty {
                     if (queryWithArtist != failedTrack.title) {
-                        withTimeoutOrNull(5500L) {
+                        withTimeoutOrNull(7500L) {
                             runCatching { musicEngine.search(altSource, failedTrack.title, 1) }.getOrDefault(emptyList())
                         }.orEmpty()
                     } else emptyList()
                 }
 
                 val candidate = MusicSourceEngine.pickBestSameSongCandidate(failedTrack, found) ?: continue
-                val resolvedAlt = withTimeoutOrNull(7500L) {
+                val resolvedAlt = withTimeoutOrNull(10000L) {
                     runCatching {
                         musicEngine.resolveStreamUrlFast(
                             source = altSource,

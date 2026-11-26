@@ -329,18 +329,23 @@ final class MusicStore: ObservableObject {
     private func loadAll() {
         let defaults = Self.defaultSources()
         if let saved: [MusicSource] = read("music_sources.json") {
-            let isV160 = !saved.contains(where: { $0.id == "fast_bilibili_music" })
-            let existingIds = Set(saved.map(\.id))
+            let stripped = saved.filter { $0.id != "fast_bilibili_music" && $0.sourceType != .BILIBILI_MUSIC }
+            let needsV171 = stripped.count != saved.count || !stripped.contains(where: { $0.id == "git_gdstudio_joox" }) || !stripped.contains(where: { $0.id == "fast_imeto_meting" })
+            let existingIds = Set(stripped.map(\.id))
             let missing = defaults.filter { !existingIds.contains($0.id) }
-            if isV160 || !missing.isEmpty {
-                let updated = saved.map { s -> MusicSource in
-                    if isV160 && s.id == "fast_vkeys_qq" { var c = s; c.enabled = false; return c }
+            if needsV171 || !missing.isEmpty {
+                let updated = stripped.map { s -> MusicSource in
+                    if s.id == "fast_vkeys_qq" { var c = s; c.enabled = false; return c }
                     return s
                 }
-                sources = missing + updated
+                let order = defaults.map(\.id)
+                var seen = Set<String>()
+                sources = (missing + updated)
+                    .filter { seen.insert($0.id).inserted }
+                    .sorted { (order.firstIndex(of: $0.id) ?? 999) < (order.firstIndex(of: $1.id) ?? 999) }
                 persist(sources, file: "music_sources.json")
             } else {
-                sources = saved
+                sources = stripped
             }
         } else {
             sources = defaults
@@ -363,10 +368,11 @@ final class MusicStore: ObservableObject {
 
     static func defaultSources() -> [MusicSource] {
         [
-            MusicSource(id: "fast_bilibili_music", name: "B站全曲无损直连 (默认推荐·完整版)", baseUrl: "https://api.bilibili.com", sourceType: .BILIBILI_MUSIC, platform: "bilibili", group: "完整版极速直连 (国内首选)", charts: [MusicChartCategory(title: "热歌完整版", idOrQuery: "热门华语歌曲 完整版 无损"), MusicChartCategory(title: "周杰伦全曲", idOrQuery: "周杰伦 无损音质 完整版"), MusicChartCategory(title: "陈奕迅金曲", idOrQuery: "陈奕迅 完整版 无损"), MusicChartCategory(title: "抖音爆款", idOrQuery: "抖音热歌 完整版 原唱")]),
-            MusicSource(id: "fast_qijieya_meting", name: "奇杰雅云音乐 320K (完整版榜单)", baseUrl: "https://api.qijieya.cn/meting/", sourceType: .METING_API, platform: "netease", group: "完整版极速直连 (国内首选)", charts: [MusicChartCategory(title: "热歌榜", idOrQuery: "3778678"), MusicChartCategory(title: "飙升榜", idOrQuery: "19723756"), MusicChartCategory(title: "新歌榜", idOrQuery: "3779629")]),
-            MusicSource(id: "fast_kuwo_direct", name: "酷我官方高速榜 (直连秒播)", baseUrl: "http://kbangserver.kuwo.cn", sourceType: .KUWO_DIRECT, platform: "kuwo", group: "完整版极速直连 (国内首选)", charts: [MusicChartCategory(title: "酷我热歌榜", idOrQuery: "16"), MusicChartCategory(title: "酷我飙升榜", idOrQuery: "93"), MusicChartCategory(title: "酷我新歌榜", idOrQuery: "17")]),
-            MusicSource(id: "git_gdstudio_netease", name: "GD音乐台 · 320K 搜歌 (GitHub/GDStudio)", baseUrl: "https://music-api.gdstudio.xyz/api.php", sourceType: .GDSTUDIO_API, platform: "netease", group: "开源聚合曲库 (备用)", charts: [MusicChartCategory(title: "华语热歌", idOrQuery: "热门"), MusicChartCategory(title: "经典金曲", idOrQuery: "周杰伦")]),
+            MusicSource(id: "fast_qijieya_meting", name: "奇杰雅云音乐 320K (默认推荐·全曲)", baseUrl: "https://api.qijieya.cn/meting/", sourceType: .METING_API, platform: "netease", group: "320K 完整全曲 (国内首选)", charts: [MusicChartCategory(title: "热歌榜", idOrQuery: "3778678"), MusicChartCategory(title: "飙升榜", idOrQuery: "19723756"), MusicChartCategory(title: "新歌榜", idOrQuery: "3779629")]),
+            MusicSource(id: "fast_kuwo_direct", name: "酷我官方高速直连 (搜歌秒播·全曲)", baseUrl: "http://kbangserver.kuwo.cn", sourceType: .KUWO_DIRECT, platform: "kuwo", group: "320K 完整全曲 (国内首选)", charts: [MusicChartCategory(title: "酷我热歌榜", idOrQuery: "16"), MusicChartCategory(title: "酷我飙升榜", idOrQuery: "93"), MusicChartCategory(title: "酷我新歌榜", idOrQuery: "17")]),
+            MusicSource(id: "fast_imeto_meting", name: "i-Meto 云音乐 320K (高速完整版)", baseUrl: "https://api.i-meto.com/meting/api", sourceType: .METING_API, platform: "netease", group: "320K 完整全曲 (国内首选)", charts: [MusicChartCategory(title: "热歌榜", idOrQuery: "3778678"), MusicChartCategory(title: "飙升榜", idOrQuery: "19723756"), MusicChartCategory(title: "新歌榜", idOrQuery: "3779629")]),
+            MusicSource(id: "git_gdstudio_joox", name: "GD音乐台 · JOOX 320K (港台/周杰伦全曲)", baseUrl: "https://music-api.gdstudio.xyz/api.php", sourceType: .GDSTUDIO_API, platform: "joox", group: "320K 完整全曲 (国内首选)", charts: [MusicChartCategory(title: "周杰伦金曲", idOrQuery: "周杰伦"), MusicChartCategory(title: "陈奕迅经典", idOrQuery: "陈奕迅"), MusicChartCategory(title: "华语热歌", idOrQuery: "热门")]),
+            MusicSource(id: "git_gdstudio_netease", name: "GD音乐台 · 网易云备用", baseUrl: "https://music-api.gdstudio.xyz/api.php", sourceType: .GDSTUDIO_API, platform: "netease", group: "开源聚合曲库 (备用)", charts: [MusicChartCategory(title: "华语热歌", idOrQuery: "热门"), MusicChartCategory(title: "治愈轻音", idOrQuery: "轻音乐")]),
             MusicSource(id: "open_audius_global", name: "Audius 全球独立音乐 (开源曲库)", baseUrl: "https://discoveryprovider.audius.co/v1", sourceType: .AUDIUS_API, platform: "global", group: "欧美/电子/独立音乐", charts: [MusicChartCategory(title: "全球热榜", idOrQuery: "trending"), MusicChartCategory(title: "Lo-Fi", idOrQuery: "Lo-Fi")]),
             MusicSource(id: "open_radiobrowser_fm", name: "Radio-Browser 在线音乐电台 (开源 FM)", baseUrl: "https://de1.api.radio-browser.info/json", sourceType: .RADIO_BROWSER, platform: "cn", group: "24h 在线电台", charts: [MusicChartCategory(title: "华语音乐台", idOrQuery: "cn"), MusicChartCategory(title: "全球人气电台", idOrQuery: "top")])
         ]

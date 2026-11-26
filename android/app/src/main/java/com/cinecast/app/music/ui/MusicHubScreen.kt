@@ -1630,7 +1630,7 @@ private fun AddOrEditMusicSourceDialog(
                 item { OutlinedTextField(value = group, onValueChange = { group = it }, label = { Text("分组标签") }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
                 item {
                     Text("协议类型", style = MaterialTheme.typography.labelLarge)
-                    MusicSourceType.entries.forEach { t ->
+                    MusicSourceType.entries.filter { it != MusicSourceType.BILIBILI_MUSIC }.forEach { t ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { type = t }) {
                             RadioButton(selected = type == t, onClick = { type = t })
                             Text(t.displayName, style = MaterialTheme.typography.bodySmall)

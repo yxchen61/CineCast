@@ -65,23 +65,32 @@ class MusicRepository(private val context: Context) {
         val loadedSources = if (rawLoaded == null) {
             defaults.also { writeJsonSync(sourcesFile, it) }
         } else {
-            val isV160Migration = rawLoaded.none { it.id == "fast_bilibili_music" }
-            val existingIds = rawLoaded.map { it.id }.toSet()
-            val missingFast = defaults.filter { it.id !in existingIds }
-            if (isV160Migration || missingFast.isNotEmpty()) {
-                val updatedExisting = rawLoaded.map { src ->
-                    if (isV160Migration && src.id == "fast_vkeys_qq") {
+            val needsV171Migration = rawLoaded.any {
+                it.id == "fast_bilibili_music" || it.sourceType == MusicSourceType.BILIBILI_MUSIC
+            } || rawLoaded.none { it.id == "git_gdstudio_joox" } || rawLoaded.none { it.id == "fast_imeto_meting" }
+            val stripped = rawLoaded.filterNot {
+                it.id == "fast_bilibili_music" || it.sourceType == MusicSourceType.BILIBILI_MUSIC
+            }
+            val existingIds = stripped.map { it.id }.toSet()
+            val missingDefaults = defaults.filter { it.id !in existingIds }
+            if (needsV171Migration || missingDefaults.isNotEmpty()) {
+                val updatedExisting = stripped.map { src ->
+                    if (src.id == "fast_vkeys_qq") {
                         src.copy(
                             enabled = false,
                             group = "备用聚合曲库 (易超时/含试听)",
-                            comment = "v1.6.0 已降级为备用源（易超时或返回30秒试听），推荐优先使用 B站全曲直连 / 奇杰雅云音乐。"
+                            comment = "易超时或返回30秒试听，已默认关闭，推荐优先使用奇杰雅320K / 酷我直连 / i-Meto / GD-JOOX。"
                         )
                     } else src
                 }
-                val merged = missingFast + updatedExisting
+                // Keep new verified full-length sources at the top in optimal order
+                val preferredOrder = defaults.map { it.id }
+                val merged = (missingDefaults + updatedExisting)
+                    .distinctBy { it.id }
+                    .sortedBy { s -> preferredOrder.indexOf(s.id).let { if (it >= 0) it else 999 } }
                 writeJsonSync(sourcesFile, merged)
                 merged
-            } else rawLoaded
+            } else stripped
         }
         _sources.value = loadedSources
         _activeSourceId.value = loadedSources.firstOrNull { it.enabled }?.id
@@ -286,76 +295,76 @@ class MusicRepository(private val context: Context) {
          * 实测全链路可直连播放（含封面与同步 LRC 歌词）的 GitHub 开源生态默认音乐源
          */
         fun defaultMusicSources(): List<MusicSource> = listOf(
-            // #1 默认完整版源：B站无损全曲直连（国内 CDN 秒开、全曲无 30 秒 VIP 截断、自动过滤伴奏与短视频）
-            MusicSource(
-                id = "fast_bilibili_music",
-                name = "B站全曲无损直连 (默认推荐·完整版)",
-                baseUrl = "https://api.bilibili.com",
-                sourceType = MusicSourceType.BILIBILI_MUSIC,
-                platform = "bilibili",
-                group = "完整版极速直连 (国内实测首选)",
-                charts = listOf(
-                    MusicChartCategory("热歌完整版", "热门华语歌曲 完整版 无损"),
-                    MusicChartCategory("周杰伦全曲", "周杰伦 无损音质 完整版"),
-                    MusicChartCategory("陈奕迅金曲", "陈奕迅 完整版 无损"),
-                    MusicChartCategory("林俊杰全曲", "林俊杰 无损音质 完整版"),
-                    MusicChartCategory("抖音爆款", "抖音热歌 完整版 原唱"),
-                    MusicChartCategory("欧美金曲", "欧美经典流行歌曲 完整版")
-                ),
-                comment = "直连 B站国内音频 CDN 提取纯音 DASH M4A 流，100% 完整全曲无 30 秒试听截断，已内置伴奏自动过滤。"
-            ),
-            // #2 完整版榜单源：奇杰雅云音乐 320K（实测 200 首网易云热歌全曲 320kbps MP3 直出）
+            // #1 默认首选：奇杰雅云音乐 320K（实测 200 首网易云热歌全曲 7~12MB 320kbps MP3 直出，含完整封面与同步歌词）
             MusicSource(
                 id = "fast_qijieya_meting",
-                name = "奇杰雅云音乐 320K (完整版榜单)",
+                name = "奇杰雅云音乐 320K (默认推荐·全曲)",
                 baseUrl = "https://api.qijieya.cn/meting/",
                 sourceType = MusicSourceType.METING_API,
                 platform = "netease",
-                group = "完整版极速直连 (国内实测首选)",
+                group = "320K 完整全曲 (国内实测首选)",
+                charts = listOf(
+                    MusicChartCategory("热歌榜", "3778678"),
+                    MusicChartCategory("飙升榜", "19723756"),
+                    MusicChartCategory("新歌榜", "3779629"),
+                    MusicChartCategory("原创榜", "2884035"),
+                    MusicChartCategory("怀旧经典", "71385702")
+                ),
+                comment = "实测返回 7~12MB 完整版 320kbps 高音质 MP3（含周杰伦/孙燕姿等全曲），支持热歌/飙升/新歌榜与逐行 LRC 歌词。"
+            ),
+            // #2 国内官方高速全曲源：酷我官方高速直连（实测搜歌与榜单直出 4MB 官方北京 CDN 完整 MP3 + 同步歌词）
+            MusicSource(
+                id = "fast_kuwo_direct",
+                name = "酷我官方高速直连 (搜歌秒播·全曲)",
+                baseUrl = "http://kbangserver.kuwo.cn",
+                sourceType = MusicSourceType.KUWO_DIRECT,
+                platform = "kuwo",
+                group = "320K 完整全曲 (国内实测首选)",
+                charts = listOf(
+                    MusicChartCategory("酷我热歌榜", "16"),
+                    MusicChartCategory("酷我飙升榜", "93"),
+                    MusicChartCategory("酷我新歌榜", "17"),
+                    MusicChartCategory("抖音热歌榜", "158"),
+                    MusicChartCategory("华语金曲榜", "145")
+                ),
+                comment = "直连酷我官方国内服务器，搜歌响应快，实测周杰伦《晴天》等完整 4MB 官方 MP3 直链秒播，自动过滤伴奏。"
+            ),
+            // #3 官方 Meting 高速节点：i-Meto 320K 完整版榜单（实测 1.1s 极速响应，7~11MB 完整版 MP3）
+            MusicSource(
+                id = "fast_imeto_meting",
+                name = "i-Meto 云音乐 320K (高速完整版)",
+                baseUrl = "https://api.i-meto.com/meting/api",
+                sourceType = MusicSourceType.METING_API,
+                platform = "netease",
+                group = "320K 完整全曲 (国内实测首选)",
                 charts = listOf(
                     MusicChartCategory("热歌榜", "3778678"),
                     MusicChartCategory("飙升榜", "19723756"),
                     MusicChartCategory("新歌榜", "3779629"),
                     MusicChartCategory("原创榜", "2884035")
                 ),
-                comment = "实测返回 7~11MB 完整版 320kbps 高音质 MP3，支持热歌/飙升/新歌榜与同步 LRC 歌词。"
+                comment = "Meting 作者官方节点，实测 1.1s 加载 200 首热歌，返回 7~11MB 完整版 MP3，与奇杰雅节点互为高速容灾备份。"
             ),
-            // #3 极速官方榜单源：酷我官方直连（官方热歌/飙升/新歌/抖音榜 + 官方 CDN 秒播）
+            // #4 港台华语 VIP 全曲利器：GD音乐台 · JOOX 320K（实测周杰伦《晴天》10.29MB、陈奕迅《十年》7.81MB 全曲）
             MusicSource(
-                id = "fast_kuwo_direct",
-                name = "酷我官方高速榜 (直连秒播)",
-                baseUrl = "http://kbangserver.kuwo.cn",
-                sourceType = MusicSourceType.KUWO_DIRECT,
-                platform = "kuwo",
-                group = "完整版极速直连 (国内实测首选)",
-                charts = listOf(
-                    MusicChartCategory("酷我热歌榜", "16"),
-                    MusicChartCategory("酷我飙升榜", "93"),
-                    MusicChartCategory("酷我新歌榜", "17"),
-                    MusicChartCategory("抖音热歌榜", "158"),
-                    MusicChartCategory("华语榜", "145")
-                ),
-                comment = "直连酷我官方国内服务器，免代理中转，榜单丰富，若遇试听片段将自动切换完整版源。"
-            ),
-            MusicSource(
-                id = "git_gdstudio_netease",
-                name = "GD音乐台 · 320K 搜歌 (GitHub/GDStudio)",
+                id = "git_gdstudio_joox",
+                name = "GD音乐台 · JOOX 320K (港台/周杰伦全曲)",
                 baseUrl = "https://music-api.gdstudio.xyz/api.php",
                 sourceType = MusicSourceType.GDSTUDIO_API,
-                platform = "netease",
-                group = "开源聚合曲库 (备用)",
+                platform = "joox",
+                group = "320K 完整全曲 (国内实测首选)",
                 charts = listOf(
+                    MusicChartCategory("周杰伦金曲", "周杰伦"),
+                    MusicChartCategory("陈奕迅经典", "陈奕迅"),
+                    MusicChartCategory("林俊杰精选", "林俊杰"),
                     MusicChartCategory("华语热歌", "热门"),
-                    MusicChartCategory("经典金曲", "周杰伦"),
-                    MusicChartCategory("治愈轻音", "轻音乐"),
-                    MusicChartCategory("国风古韵", "古风"),
-                    MusicChartCategory("影视原声", "OST")
+                    MusicChartCategory("粤语经典", "粤语")
                 ),
-                comment = "基于 GDStudio 开源音乐聚合接口，实测网易云线路可返回 10MB 完整版 320kbps MP3 与逐行歌词。"
+                comment = "实测 JOOX 线路支持周杰伦《晴天》10.29MB、陈奕迅《十年》7.81MB 等 320kbps 完整全曲与逐行 LRC 歌词。"
             ),
             MusicSource(
                 id = "git_meting_injahow",
-                name = "云音乐榜单 (GitHub/Meting-Injahow)",
+                name = "Injahow 云音乐备用榜 (Meting)",
                 baseUrl = "https://api.injahow.cn/meting/",
                 sourceType = MusicSourceType.METING_API,
                 platform = "netease",
@@ -367,6 +376,21 @@ class MusicRepository(private val context: Context) {
                     MusicChartCategory("原创榜", "2884035")
                 ),
                 comment = "基于开源仓库 injahow/meting-api，网易云热歌榜单备用源。"
+            ),
+            MusicSource(
+                id = "git_gdstudio_netease",
+                name = "GD音乐台 · 网易云备用 (GitHub/GDStudio)",
+                baseUrl = "https://music-api.gdstudio.xyz/api.php",
+                sourceType = MusicSourceType.GDSTUDIO_API,
+                platform = "netease",
+                group = "开源聚合曲库 (备用)",
+                charts = listOf(
+                    MusicChartCategory("华语热歌", "热门"),
+                    MusicChartCategory("治愈轻音", "轻音乐"),
+                    MusicChartCategory("国风古韵", "古风"),
+                    MusicChartCategory("影视原声", "OST")
+                ),
+                comment = "基于 GDStudio 开源音乐聚合接口的网易云备用线路。"
             ),
             MusicSource(
                 id = "open_audius_global",
