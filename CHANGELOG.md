@@ -4,6 +4,17 @@
 
 ---
 
+## [v1.3.0] - 2026-11-26
+
+### 新增（Added）
+- **独立多源音乐播放模块（Android & iOS 双端同步上线）**：
+  - **三域完全分离**：底部导航升级为 5 栏均衡 Google Material 3 布局（`影视 | 直播 | 阅读 | 音乐 | 我的`），影视源管理收纳至影视切源面板与「我的」页直达入口；音乐模块拥有独立代码域 `music/`、独立持久化存储 `cinecast_music_*.json`、独立 `MusicAudioController` 音频 ExoPlayer 内核与独立 `MusicBackupBundle` 备份。
+  - **GitHub 开源音乐源接入**：内置 5 个全链路实测可播开源源（`injahow/meting-api` 云音乐榜单、`GDStudio` 320kbps 聚合搜歌、`metowolf/Meting` 镜像、`Audius` 全球独立音乐、`Radio-Browser` 在线 FM 电台），并支持从 GitHub/Gitee 一键拉取导入 **MusicFree `plugins.json`**、通用音乐源 JSON 及 M3U 音频电台。
+  - **YouTube Music 风格播放体验**：底部常驻迷你播放条、全屏封面与 **LRC 逐行同步滚动歌词**（支持点击歌词跳转）、三种循环模式、我喜欢的音乐、自定义歌单、播放队列抽屉及播放中一键跨源换源。
+- **文档与安装包**：新增《07_音乐模块详细设计文档》《08_音乐模块部署与音源导入手册》《示例音乐源配置_CineCast模板.json》及 v1.3.0 正式版 Android Release APK。
+
+---
+
 ## [v1.2.0] - 2026-11-26
 
 ### 新增（Added）

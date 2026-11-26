@@ -9,6 +9,10 @@ import com.cinecast.app.data.engine.TvBoxConfigParser
 import com.cinecast.app.data.engine.VodSourceEngine
 import com.cinecast.app.data.network.NetworkClient
 import com.cinecast.app.data.repository.AppRepository
+import com.cinecast.app.music.engine.MusicSourceEngine
+import com.cinecast.app.music.engine.MusicSourceParser
+import com.cinecast.app.music.player.MusicAudioController
+import com.cinecast.app.music.repository.MusicRepository
 import com.cinecast.app.novel.engine.LegadoSourceParser
 import com.cinecast.app.novel.engine.NovelSourceEngine
 import com.cinecast.app.novel.repository.NovelRepository
@@ -26,12 +30,22 @@ class CineCastApp : Application() {
     lateinit var dlnaController: DlnaController
         private set
 
-    // 独立小说阅读模块依赖（与影视模块完全隔离）
+    // 独立小说阅读模块依赖（与影视、音乐完全隔离）
     lateinit var novelRepository: NovelRepository
         private set
     lateinit var novelEngine: NovelSourceEngine
         private set
     lateinit var legadoParser: LegadoSourceParser
+        private set
+
+    // 独立音乐播放模块依赖（与影视、小说完全隔离）
+    lateinit var musicRepository: MusicRepository
+        private set
+    lateinit var musicEngine: MusicSourceEngine
+        private set
+    lateinit var musicSourceParser: MusicSourceParser
+        private set
+    lateinit var musicAudioController: MusicAudioController
         private set
 
     override fun onCreate() {
@@ -52,6 +66,11 @@ class CineCastApp : Application() {
         novelRepository = NovelRepository(this)
         novelEngine = NovelSourceEngine()
         legadoParser = LegadoSourceParser()
+
+        musicRepository = MusicRepository(this)
+        musicEngine = MusicSourceEngine()
+        musicSourceParser = MusicSourceParser()
+        musicAudioController = MusicAudioController(this)
     }
 
     companion object {

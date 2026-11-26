@@ -1,8 +1,8 @@
 # 极光视界 · CineCast
 
-一款遵循 **Google Material Design 3（Google TV / Google Play Books / Material You）** 设计语言打造的多平台 **可配置影视播放投屏 + 独立多源小说阅读** 双栖应用，同时提供 **Android 原生版（Kotlin + Jetpack Compose + Media3 + Jsoup）** 与 **iOS 原生版（SwiftUI + AVPlayer + AirPlay 2 + DLNA）**。
+一款遵循 **Google Material Design 3（Google TV / Google Play Books / YouTube Music / Material You）** 设计语言打造的多平台 **影视播放投屏 + 独立多源小说阅读 + 独立多源音乐播放** 三栖个人媒体应用，同时提供 **Android 原生版（Kotlin + Jetpack Compose + Media3 + Jsoup）** 与 **iOS 原生版（SwiftUI + AVPlayer + AirPlay 2 + DLNA）**。
 
-影视模块兼容 [cyao2q/files](https://github.com/cyao2q/files) 等 TVBox JSON 配置生态；**独立小说阅读模块**兼容 [XIU2/Yuedu](https://github.com/XIU2/Yuedu)、[liufuyou/read](https://github.com/liufuyou/read) 等 GitHub 开源 **Legado 3.0 书源 JSON** 生态，**视频源与小说书源、功能与存储完全独立隔离**，开箱即用。
+影视模块兼容 [cyao2q/files](https://github.com/cyao2q/files) 等 TVBox JSON 配置生态；**独立小说阅读模块**兼容 [XIU2/Yuedu](https://github.com/XIU2/Yuedu)、[liufuyou/read](https://github.com/liufuyou/read) 等 GitHub 开源 **Legado 3.0 书源 JSON** 生态；**独立音乐模块**兼容 **Meting API**、**GDStudio API**、**MusicFree `plugins.json`**、**Audius** 与 **Radio-Browser** 开源音乐生态。**三大模块的源配置、本地存储与交互功能 100% 物理隔离**，开箱即用。
 
 ---
 
@@ -14,6 +14,10 @@
   - 首页「最新热播 | 我的收藏」双页签快捷切换
   - **两层分级分类 + 全部分类与筛选面板**：自动聚合苹果 CMS 父级大类、展开二级子分类、支持年份与高分排序筛选
   - 支持深色 / 浅色 / 跟随系统主题及 Android 12+ Material You 动态壁纸取色
+- **独立音乐播放模块（v1.3.0 新增，YouTube Music / Material 3 风格）**：
+  - **三域彻底隔离**：独立底部导航「音乐」（内含 `音乐馆 | 歌单 | 音乐源` 分段导航）、独立 `MusicRepository` 存储与 `MusicAudioController` 音频播放内核（播放视频时自动暂停音乐防串音）
+  - **GitHub 开源音乐源生态**：内置 5 个全链路实测可直连播放的开源音乐源（`injahow/meting-api` 云音乐榜单、`GDStudio` 320kbps 聚合搜歌、`metowolf/Meting` 镜像、`Audius` 全球独立音乐、`Radio-Browser` 24h 在线电台），支持一键导入 GitHub **MusicFree `plugins.json`**、自定义 JSON 与开源 M3U 电台
+  - **沉浸式同步歌词播放器**：底部常驻迷你播放条、全屏封面与 **LRC 逐行同步滚动歌词**（支持点击歌词行跳转）、列表/单曲/随机循环、自定义歌单、播放队列抽屉及播放中一键跨源换源
 - **独立小说阅读模块（v1.2.0 新增，Google Play Books 风格）**：
   - **彻底分离架构**：独立底部导航「阅读」（内含 `书架 | 书城 | 书源` 分段导航）、独立 `NovelRepository` 本地存储与 `NovelBackupBundle` 备份，与影视源零耦合
   - **GitHub 开源书源生态**：内置 8 个从 GitHub 实测筛选的高可用小说源（含 `XIU2/Yuedu` 酷我 API / 速读谷 / 手机小说、`liufuyou/read` 全本同人 / ESJZone / 爱尚 / 英文原著，以及永久直连的 **Gutendex 开源中文与世界名著库**），并支持一键订阅拉取或粘贴任意 Legado 3.0 JSON 书源
@@ -79,5 +83,8 @@ open CineCast.xcodeproj
 - [04_iOS版打包签名与安装指南.md](docs/04_iOS版打包签名与安装指南.md)
 - [05_小说阅读模块详细设计文档.md](docs/05_小说阅读模块详细设计文档.md)
 - [06_小说阅读模块部署与书源导入手册.md](docs/06_小说阅读模块部署与书源导入手册.md)
+- [07_音乐模块详细设计文档.md](docs/07_音乐模块详细设计文档.md)
+- [08_音乐模块部署与音源导入手册.md](docs/08_音乐模块部署与音源导入手册.md)
 - [示例视频源配置_CineCast备份模板.json](docs/示例视频源配置_CineCast备份模板.json)
 - [示例小说书源配置_Legado模板.json](docs/示例小说书源配置_Legado模板.json)
+- [示例音乐源配置_CineCast模板.json](docs/示例音乐源配置_CineCast模板.json)

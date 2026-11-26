@@ -1,0 +1,57 @@
+[
+  {
+    "id": "git_meting_injahow",
+    "name": "云音乐榜单 (GitHub/Meting-Injahow)",
+    "baseUrl": "https://api.injahow.cn/meting/",
+    "sourceType": "METING_API",
+    "platform": "netease",
+    "group": "精选直连 (Meting 开源)",
+    "charts": [
+      { "title": "热歌榜", "idOrQuery": "3778678" },
+      { "title": "飙升榜", "idOrQuery": "19723756" },
+      { "title": "新歌榜", "idOrQuery": "3779629" },
+      { "title": "原创榜", "idOrQuery": "2884035" }
+    ],
+    "comment": "基于开源项目 injahow/meting-api，提供直连音频流与完整 LRC 同步歌词。"
+  },
+  {
+    "id": "git_gdstudio_netease",
+    "name": "GD音乐台 · 曲库搜歌 (GitHub/GDStudio)",
+    "baseUrl": "https://music-api.gdstudio.xyz/api.php",
+    "sourceType": "GDSTUDIO_API",
+    "platform": "netease",
+    "group": "精选直连 (GDStudio API)",
+    "charts": [
+      { "title": "华语热歌", "idOrQuery": "热门" },
+      { "title": "经典金曲", "idOrQuery": "周杰伦" },
+      { "title": "治愈轻音", "idOrQuery": "轻音乐" }
+    ],
+    "comment": "支持 320kbps 高音质搜歌、专辑封面与 LRC 同步歌词。"
+  },
+  {
+    "id": "open_audius_global",
+    "name": "Audius 全球独立音乐 (开源曲库)",
+    "baseUrl": "https://discoveryprovider.audius.co/v1",
+    "sourceType": "AUDIUS_API",
+    "platform": "global",
+    "group": "欧美/电子/独立音乐",
+    "charts": [
+      { "title": "全球热榜", "idOrQuery": "trending" },
+      { "title": "Electronic 电子", "idOrQuery": "Electronic" },
+      { "title": "Lo-Fi 专注", "idOrQuery": "Lo-Fi" }
+    ]
+  },
+  {
+    "id": "open_radiobrowser_fm",
+    "name": "Radio-Browser 在线音乐电台 (开源 FM)",
+    "baseUrl": "https://de1.api.radio-browser.info/json",
+    "sourceType": "RADIO_BROWSER",
+    "platform": "cn",
+    "group": "24h 在线电台",
+    "charts": [
+      { "title": "华语音乐台", "idOrQuery": "cn" },
+      { "title": "全球人气电台", "idOrQuery": "top" },
+      { "title": "爵士与蓝调", "idOrQuery": "jazz" }
+    ]
+  }
+]

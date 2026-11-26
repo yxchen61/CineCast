@@ -56,7 +56,8 @@ fun HomeScreen(
     viewModel: MainViewModel,
     onOpenVod: (sourceId: String, vodId: String) -> Unit,
     onOpenWebSniffer: (url: String, title: String) -> Unit,
-    onOpenCastSheet: () -> Unit
+    onOpenCastSheet: () -> Unit,
+    onManageVideoSources: () -> Unit = {}
 ) {
     val homeState by viewModel.homeState.collectAsState()
     val searchState by viewModel.searchState.collectAsState()
@@ -887,11 +888,29 @@ fun HomeScreen(
                     .padding(horizontal = 20.dp)
                     .padding(bottom = 28.dp)
             ) {
-                Text(
-                    text = "切换当前视频源",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "切换当前视频源",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    FilledTonalButton(
+                        onClick = {
+                            showSourcePicker = false
+                            onManageVideoSources()
+                        },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Icon(Icons.Rounded.Dns, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("管理影视源", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
                 Spacer(Modifier.height(12.dp))
 
                 LazyColumn(

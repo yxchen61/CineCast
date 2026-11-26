@@ -3,6 +3,7 @@ import SwiftUI
 struct LibraryView: View {
     @EnvironmentObject var store: AppStore
     let onOpenVod: (String, String) -> Void
+    var onOpenVideoSources: () -> Void = {}
 
     @State private var showRestoreSheet = false
     @State private var restoreText = ""
@@ -10,6 +11,12 @@ struct LibraryView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    Button(action: onOpenVideoSources) {
+                        Label("影视源与 TVBox 订阅配置", systemImage: "server.rack")
+                    }
+                }
+
                 // Watch History
                 Section {
                     if store.history.isEmpty {
@@ -104,7 +111,7 @@ struct LibraryView: View {
                 }
 
                 Section {
-                    Text("极光视界 CineCast iOS v1.2.0 · SwiftUI · AVPlayer · Legado 小说阅读 · AirPlay & DLNA")
+                    Text("极光视界 CineCast iOS v1.3.0 · 影视 · 小说阅读 · 多源音乐 · SwiftUI")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }

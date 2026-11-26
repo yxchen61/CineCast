@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -22,7 +23,8 @@ import com.cinecast.app.ui.viewmodel.MainViewModel
 @Composable
 fun SourcesScreen(
     viewModel: MainViewModel,
-    onOpenWebSniffer: (url: String, title: String) -> Unit
+    onOpenWebSniffer: (url: String, title: String) -> Unit,
+    onBack: (() -> Unit)? = null
 ) {
     val sources by viewModel.sources.collectAsState()
     val subscriptions by viewModel.subscriptions.collectAsState()
@@ -47,7 +49,14 @@ fun SourcesScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("视频源配置", fontWeight = FontWeight.SemiBold) },
+                navigationIcon = {
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                        }
+                    }
+                },
+                title = { Text("影视源配置", fontWeight = FontWeight.SemiBold) },
                 actions = {
                     IconButton(onClick = { showPasteJsonDialog = true }) {
                         Icon(Icons.Rounded.ContentPaste, contentDescription = "粘贴JSON配置")

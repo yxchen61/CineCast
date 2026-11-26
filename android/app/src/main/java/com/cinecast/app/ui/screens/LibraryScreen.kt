@@ -25,7 +25,8 @@ import com.cinecast.app.ui.viewmodel.MainViewModel
 @Composable
 fun LibraryScreen(
     viewModel: MainViewModel,
-    onOpenVod: (sourceId: String, vodId: String) -> Unit
+    onOpenVod: (sourceId: String, vodId: String) -> Unit,
+    onOpenVideoSources: () -> Unit = {}
 ) {
     val history by viewModel.history.collectAsState()
     val favorites by viewModel.favorites.collectAsState()
@@ -50,6 +51,30 @@ fun LibraryScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
+            // Video Sources Quick Entry (separated from Novel & Music sources)
+            item {
+                Card(
+                    onClick = onOpenVideoSources,
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.Dns, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("影视源与 TVBox 订阅管理", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text("独立管理视频采集源、VIP 解析与广告过滤（小说与音乐源在各自模块独立管理）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.Rounded.ChevronRight, contentDescription = null)
+                    }
+                }
+            }
+
             // Continue Watching / History
             item {
                 Row(
@@ -259,7 +284,7 @@ fun LibraryScreen(
 
             item {
                 Text(
-                    "极光视界 CineCast v1.2.0 · Material Design 3 · Media3 ExoPlayer · Legado 小说阅读 · Native DLNA",
+                    "极光视界 CineCast v1.3.0 · 影视 · 小说阅读 · 多源音乐 · Material Design 3",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
