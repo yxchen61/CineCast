@@ -83,4 +83,41 @@ class MusicEngineUnitTest {
         assertEquals(80500L, parsed[3].timeMs)
         assertEquals("跌倒了就不敢继续往前走", parsed[3].text)
     }
+
+    @Test
+    fun testSameSongCrossSourceCandidateMatching() {
+        val target = com.cinecast.app.music.model.MusicTrack(
+            id = "orig_1",
+            sourceId = "fast_vkeys_qq",
+            sourceName = "QQ音乐",
+            title = "晴天",
+            artist = "周杰伦"
+        )
+        val candidates = listOf(
+            com.cinecast.app.music.model.MusicTrack(
+                id = "c1", sourceId = "fast_kuwo_direct", sourceName = "酷我",
+                title = "晴天 (伴奏)", artist = "周杰伦"
+            ),
+            com.cinecast.app.music.model.MusicTrack(
+                id = "c2", sourceId = "fast_kuwo_direct", sourceName = "酷我",
+                title = "晴天", artist = "周杰伦"
+            ),
+            com.cinecast.app.music.model.MusicTrack(
+                id = "c3", sourceId = "fast_kuwo_direct", sourceName = "酷我",
+                title = "七里香", artist = "周杰伦"
+            )
+        )
+        val picked = MusicSourceEngine.pickBestSameSongCandidate(target, candidates)
+        assertNotNull(picked)
+        assertEquals("c2", picked?.id)
+
+        // Ensure completely unrelated tracks are rejected (returns null)
+        val unrelated = listOf(
+            com.cinecast.app.music.model.MusicTrack(
+                id = "u1", sourceId = "fast_kuwo_direct", sourceName = "酷我",
+                title = "稻香", artist = "周杰伦"
+            )
+        )
+        assertNull(MusicSourceEngine.pickBestSameSongCandidate(target, unrelated))
+    }
 }

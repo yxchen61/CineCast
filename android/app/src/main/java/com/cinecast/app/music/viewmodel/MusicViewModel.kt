@@ -92,12 +92,21 @@ class MusicViewModel : ViewModel() {
 
     private var searchJob: Job? = null
     private var switchJob: Job? = null
+    private var playJob: Job? = null
     private var extrasJob: Job? = null
+    private val triedSourceIdsForCurrentTrack = mutableSetOf<String>()
+    private var consecutiveAutoSkipCount: Int = 0
     private val chartCache = java.util.concurrent.ConcurrentHashMap<String, List<MusicTrack>>()
 
     init {
         audioController.setOnTrackEnded {
             handleTrackCompleted()
+        }
+        audioController.setOnTrackError { reason ->
+            handleCurrentTrackPlaybackError(reason)
+        }
+        audioController.setOnTrackReady {
+            consecutiveAutoSkipCount = 0
         }
         viewModelScope.launch {
             while (isActive) {
@@ -407,16 +416,29 @@ class MusicViewModel : ViewModel() {
             queue = tracks,
             currentIndex = startIndex
         )
-        playIndex(startIndex)
+        playIndex(startIndex, resetFailoverState = true, isAutoAdvance = false)
     }
 
-    fun playIndex(index: Int) {
+    fun playIndex(
+        index: Int,
+        resetFailoverState: Boolean = true,
+        isAutoAdvance: Boolean = false
+    ) {
         val queue = _playerState.value.queue
         val track = queue.getOrNull(index) ?: return
         val source = musicRepository.getSourceById(track.sourceId) ?: getActiveSource() ?: return
 
+        playJob?.cancel()
         extrasJob?.cancel()
-        viewModelScope.launch {
+        if (resetFailoverState) {
+            triedSourceIdsForCurrentTrack.clear()
+        }
+        if (!isAutoAdvance) {
+            consecutiveAutoSkipCount = 0
+        }
+        triedSourceIdsForCurrentTrack.add(source.id)
+
+        playJob = viewModelScope.launch {
             _playerState.value = _playerState.value.copy(
                 currentIndex = index,
                 currentTrack = track,
@@ -426,50 +448,152 @@ class MusicViewModel : ViewModel() {
             )
             try {
                 // Step 1: Resolve audio URL ONLY and start ExoPlayer IMMEDIATELY (non-blocking)
-                val resolved = musicEngine.resolveStreamUrlFast(
-                    source = source,
-                    track = track,
-                    preferHighBitrate = settings.value.preferHighBitrate
-                )
-                if (resolved.streamUrl.isBlank()) {
-                    _playerState.value = _playerState.value.copy(
-                        currentTrack = resolved,
-                        isResolvingStream = false,
-                        resolveError = "当前音乐源暂无此曲音频流，请点击「换源」试听其他源"
+                val resolved = withTimeoutOrNull(9000L) {
+                    musicEngine.resolveStreamUrlFast(
+                        source = source,
+                        track = track,
+                        preferHighBitrate = settings.value.preferHighBitrate
                     )
+                }
+                if (resolved == null || resolved.streamUrl.isBlank()) {
+                    // Auto failover to next enabled music source for the SAME song!
+                    autoSwitchSameSongOrAdvance(index, track, "当前音源暂无可用音频流")
                     return@launch
                 }
-                val updatedQueue = _playerState.value.queue.toMutableList().apply {
-                    if (index in indices) this[index] = resolved
-                }
-                _playerState.value = _playerState.value.copy(
-                    queue = updatedQueue,
-                    currentTrack = resolved,
-                    isResolvingStream = false,
-                    resolveError = null
-                )
-                audioController.playUrl(resolved.streamUrl)
-                musicRepository.recordRecentPlay(resolved)
-
-                // Step 2: Fetch cover & synced LRC lyrics asynchronously in background (zero audio delay!)
-                extrasJob = launch {
-                    val (cover, lrcLines) = runCatching {
-                        musicEngine.resolveExtrasAsync(source, resolved)
-                    }.getOrDefault(resolved.coverUrl to emptyList())
-                    if (_playerState.value.currentTrack?.uniqueKey == resolved.uniqueKey) {
-                        val enriched = resolved.copy(coverUrl = cover.ifBlank { resolved.coverUrl })
-                        _playerState.value = _playerState.value.copy(
-                            currentTrack = enriched,
-                            lyrics = if (lrcLines.isNotEmpty()) lrcLines else _playerState.value.lyrics
-                        )
-                    }
-                }
+                startResolvedPlayback(index, source, resolved)
             } catch (e: Exception) {
+                autoSwitchSameSongOrAdvance(index, track, e.message ?: "解析音频失败")
+            }
+        }
+    }
+
+    private fun startResolvedPlayback(index: Int, source: MusicSource, resolved: MusicTrack) {
+        val updatedQueue = _playerState.value.queue.toMutableList().apply {
+            if (index in indices) this[index] = resolved
+        }
+        _playerState.value = _playerState.value.copy(
+            queue = updatedQueue,
+            currentIndex = index,
+            currentTrack = resolved,
+            lyrics = MusicSourceEngine.parseLrc(resolved.rawLyric).ifEmpty { _playerState.value.lyrics },
+            isResolvingStream = false,
+            resolveError = null
+        )
+        audioController.playUrl(resolved.streamUrl)
+        viewModelScope.launch { musicRepository.recordRecentPlay(resolved) }
+
+        // Step 2: Fetch cover & synced LRC lyrics asynchronously in background (zero audio delay!)
+        extrasJob?.cancel()
+        extrasJob = viewModelScope.launch {
+            val (cover, lrcLines) = runCatching {
+                musicEngine.resolveExtrasAsync(source, resolved)
+            }.getOrDefault(resolved.coverUrl to emptyList())
+            if (_playerState.value.currentTrack?.uniqueKey == resolved.uniqueKey) {
+                val enriched = resolved.copy(coverUrl = cover.ifBlank { resolved.coverUrl })
                 _playerState.value = _playerState.value.copy(
-                    isResolvingStream = false,
-                    resolveError = "解析音频失败：${e.message ?: "请尝试换源"}"
+                    currentTrack = enriched,
+                    lyrics = if (lrcLines.isNotEmpty()) lrcLines else _playerState.value.lyrics
                 )
             }
+        }
+    }
+
+    private fun handleCurrentTrackPlaybackError(reason: String) {
+        val cur = _playerState.value
+        val track = cur.currentTrack ?: return
+        val idx = cur.currentIndex
+        if (idx !in cur.queue.indices) return
+        if (track.isLiveRadio) {
+            _playerState.value = cur.copy(resolveError = "电台流暂时中断 ($reason)")
+            return
+        }
+        playJob?.cancel()
+        extrasJob?.cancel()
+        playJob = viewModelScope.launch {
+            autoSwitchSameSongOrAdvance(idx, track, reason)
+        }
+    }
+
+    /**
+     * 同曲跨源自动容灾切换：当前音源解析失败或 ExoPlayer 播放报错时，
+     * 自动按响应速度优先检索其余已启用音源中的「同一首歌曲」并无缝续播；
+     * 若全部音源均不可播，则自动安全跳过至队列下一首（带防死循环保护）。
+     */
+    private suspend fun autoSwitchSameSongOrAdvance(
+        index: Int,
+        failedTrack: MusicTrack,
+        reason: String
+    ) {
+        val remainingSources = getEnabledSources()
+            .filter {
+                it.searchable &&
+                    it.id !in triedSourceIdsForCurrentTrack &&
+                    it.sourceType != MusicSourceType.RADIO_BROWSER &&
+                    it.sourceType != MusicSourceType.M3U_AUDIO
+            }
+            .sortedBy {
+                when (it.sourceType) {
+                    MusicSourceType.VKEYS_API -> 0
+                    MusicSourceType.KUWO_DIRECT -> 1
+                    MusicSourceType.GDSTUDIO_API -> 2
+                    MusicSourceType.METING_API -> 3
+                    MusicSourceType.AUDIUS_API -> 4
+                    else -> 5
+                }
+            }
+
+        if (remainingSources.isNotEmpty()) {
+            _playerState.value = _playerState.value.copy(
+                isResolvingStream = true,
+                resolveError = "当前音源异常，正自动切换其他音源播放《${failedTrack.title}》..."
+            )
+            val cleanArtist = failedTrack.artist.substringBefore("/").substringBefore("·").trim()
+            val queryWithArtist = if (cleanArtist.isNotBlank() && cleanArtist != "未知歌手") {
+                "${failedTrack.title} $cleanArtist"
+            } else failedTrack.title
+
+            for (altSource in remainingSources) {
+                triedSourceIdsForCurrentTrack.add(altSource.id)
+                val found = withTimeoutOrNull(6500L) {
+                    runCatching { musicEngine.search(altSource, queryWithArtist, 1) }.getOrDefault(emptyList())
+                }.orEmpty().ifEmpty {
+                    if (queryWithArtist != failedTrack.title) {
+                        withTimeoutOrNull(5500L) {
+                            runCatching { musicEngine.search(altSource, failedTrack.title, 1) }.getOrDefault(emptyList())
+                        }.orEmpty()
+                    } else emptyList()
+                }
+
+                val candidate = MusicSourceEngine.pickBestSameSongCandidate(failedTrack, found) ?: continue
+                val resolvedAlt = withTimeoutOrNull(7500L) {
+                    runCatching {
+                        musicEngine.resolveStreamUrlFast(
+                            source = altSource,
+                            track = candidate,
+                            preferHighBitrate = settings.value.preferHighBitrate
+                        )
+                    }.getOrNull()
+                }
+                if (resolvedAlt != null && resolvedAlt.streamUrl.isNotBlank()) {
+                    _toastMessage.tryEmit("音源异常，已自动切换「${altSource.name.substringBefore(" ")}」播放《${failedTrack.title}》")
+                    startResolvedPlayback(index, altSource, resolvedAlt)
+                    return
+                }
+            }
+        }
+
+        // All enabled sources failed for this song -> safely advance to next track if queue has more songs
+        val curQueue = _playerState.value.queue
+        val maxConsecutiveSkips = minOf((curQueue.size - 1).coerceAtLeast(0), 5)
+        if (curQueue.size > 1 && consecutiveAutoSkipCount < maxConsecutiveSkips) {
+            consecutiveAutoSkipCount++
+            _toastMessage.tryEmit("《${failedTrack.title}》暂无可用音源，已自动播放下一首")
+            advanceToNextTrack(isAutoAdvance = true)
+        } else {
+            _playerState.value = _playerState.value.copy(
+                isResolvingStream = false,
+                resolveError = "所有可用音源均无法播放《${failedTrack.title}》($reason)，请检查网络或手动换源"
+            )
         }
     }
 
@@ -486,20 +610,30 @@ class MusicViewModel : ViewModel() {
     }
 
     fun nextTrack() {
+        advanceToNextTrack(isAutoAdvance = false)
+    }
+
+    private fun advanceToNextTrack(isAutoAdvance: Boolean) {
         val cur = _playerState.value
         if (cur.queue.isEmpty()) return
         val nextIdx = when (settings.value.repeatMode) {
-            RepeatMode.SHUFFLE -> if (cur.queue.size > 1) Random.nextInt(cur.queue.size) else 0
+            RepeatMode.SHUFFLE -> {
+                if (cur.queue.size > 1) {
+                    var picked = Random.nextInt(cur.queue.size)
+                    if (picked == cur.currentIndex) picked = (picked + 1) % cur.queue.size
+                    picked
+                } else 0
+            }
             else -> (cur.currentIndex + 1) % cur.queue.size
         }
-        playIndex(nextIdx)
+        playIndex(nextIdx, resetFailoverState = true, isAutoAdvance = isAutoAdvance)
     }
 
     fun prevTrack() {
         val cur = _playerState.value
         if (cur.queue.isEmpty()) return
         val prevIdx = if (cur.currentIndex <= 0) cur.queue.lastIndex else cur.currentIndex - 1
-        playIndex(prevIdx)
+        playIndex(prevIdx, resetFailoverState = true, isAutoAdvance = false)
     }
 
     private fun handleTrackCompleted() {
@@ -507,10 +641,21 @@ class MusicViewModel : ViewModel() {
         if (cur.queue.isEmpty()) return
         when (settings.value.repeatMode) {
             RepeatMode.LOOP_ONE -> {
-                audioController.seekTo(0L)
-                cur.currentTrack?.streamUrl?.takeIf { it.isNotBlank() }?.let { audioController.playUrl(it) }
+                val url = cur.currentTrack?.streamUrl
+                if (!url.isNullOrBlank()) {
+                    audioController.playUrl(url)
+                } else {
+                    playIndex(cur.currentIndex.coerceIn(0, cur.queue.lastIndex), resetFailoverState = true, isAutoAdvance = true)
+                }
             }
-            else -> nextTrack()
+            else -> {
+                if (cur.queue.size == 1) {
+                    val url = cur.currentTrack?.streamUrl
+                    if (!url.isNullOrBlank()) audioController.playUrl(url)
+                } else {
+                    advanceToNextTrack(isAutoAdvance = true)
+                }
+            }
         }
     }
 

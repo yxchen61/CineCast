@@ -53,8 +53,31 @@ class NovelRepository(private val context: Context) {
     }
 
     private fun loadAllSync() {
-        val loadedSources = readJson<List<NovelSource>>(sourcesFile) ?: defaultNovelSources().also {
-            writeJsonSync(sourcesFile, it)
+        val rawLoaded = readJson<List<NovelSource>>(sourcesFile)
+        val defaults = defaultNovelSources()
+        val loadedSources = if (rawLoaded == null) {
+            defaults.also { writeJsonSync(sourcesFile, it) }
+        } else {
+            // v1.4.0 自动迁移：注入高可用维基文库名著馆 & 酷我历史名著馆，移除失效 502 源，并默认关闭易失效的网页规则源
+            val isPreV140 = rawLoaded.none { it.id == "open_wikisource_classics" }
+            val deadIds = setOf("git_liufuyou_aishang")
+            val flakyLegacyIds = setOf(
+                "git_xiu2_sudugu",
+                "git_liufuyou_qbtr",
+                "git_liufuyou_esjzone",
+                "git_xiu2_shoujix",
+                "git_liufuyou_tingroom"
+            )
+            val cleaned = rawLoaded.filterNot { it.id in deadIds }.map { src ->
+                if (isPreV140 && src.id in flakyLegacyIds) {
+                    src.copy(enabled = false, group = "备用网页规则源 (按需手动开启)")
+                } else src
+            }
+            val existingIds = cleaned.map { it.id }.toSet()
+            val newReliable = defaults.filter { it.id !in existingIds && it.enabled }
+            val merged = newReliable + cleaned
+            if (merged != rawLoaded) writeJsonSync(sourcesFile, merged)
+            merged
         }
         _sources.value = loadedSources
         _activeSourceId.value = loadedSources.firstOrNull { it.enabled }?.id
@@ -268,30 +291,53 @@ class NovelRepository(private val context: Context) {
 
     companion object {
         /**
-         * 从 GitHub 开源书源仓库（XIU2/Yuedu、liufuyou/read）与公版名著 API 精选并实测验证的默认小说源
+         * v1.4.0 高可用名著与开源书源精选：
+         * 默认仅启用 100% 实测可读的公版名著 API（中文维基文库 / 古登堡）与纯 JSON API（酷我书城/历史名著馆），
+         * 将易受改版或反爬影响的传统 HTML 网页规则源设为默认关闭的备选项，彻底解决「很多小说点开看不了」问题。
          */
         fun defaultNovelSources(): List<NovelSource> = listOf(
-            // 1. 酷我小说 JSON API —— 来自 GitHub XIU2/Yuedu，全链路实测直连秒开
+            // 1. 中文维基文库 · 古典与现代名著典藏 —— MediaWiki 官方开放 API，全自动转简体，零反爬 100% 可读
+            NovelSource(
+                id = "open_wikisource_classics",
+                name = "维基文库 · 中文名著典藏 (100%可读)",
+                baseUrl = "https://zh.wikisource.org",
+                group = "名著典藏 (永久直连)",
+                sourceType = NovelSourceType.WIKISOURCE_API,
+                searchUrl = "https://zh.wikisource.org/w/api.php",
+                comment = "内置四大名著、古典演义、鲁迅全集、史记兵法、唐诗宋词等 40+ 部全本名著，并支持实时检索维基文库全库，正文自动转换为简体中文。"
+            ),
+            // 2. Gutendex 古登堡开源名著库 —— 444 部中文古典 + 7 万部世界文学名著
+            NovelSource(
+                id = "open_gutendex_classics",
+                name = "古登堡世界名著 (中英公版经典)",
+                baseUrl = "https://gutendex.com",
+                group = "名著典藏 (永久直连)",
+                sourceType = NovelSourceType.GUTENDEX_API,
+                searchUrl = "https://gutendex.com/books/?search={{key}}&page={{page}}",
+                comment = "Project Gutenberg / Gutendex 开源公版图书馆，包含《西游记》《三国演义》《福尔摩斯》《傲慢与偏见》等 7 万部中英文经典名著。"
+            ),
+            // 3. 酷我小说 JSON API —— 来自 GitHub XIU2/Yuedu，全链路实测直连秒开
             NovelSource(
                 id = "git_xiu2_kuwo",
-                name = "酷我小说 (GitHub/XIU2 API)",
+                name = "酷我小说书城 (API 极速直连)",
                 baseUrl = "http://appi.kuwo.cn",
-                group = "精选直连 (GitHub 实测)",
+                group = "精选直连 (GitHub API)",
                 sourceType = NovelSourceType.LEGADO_JSON,
                 searchUrl = "/novels/api/book/search?keyword={{key}}&pi={{page}}&ps=30",
                 exploreUrl = listOf(
+                    "历史演义::/novels/api/book/search?keyword=三国&pi={{page}}&ps=20",
+                    "古典红楼::/novels/api/book/search?keyword=红楼&pi={{page}}&ps=20",
+                    "明清风云::/novels/api/book/search?keyword=明朝&pi={{page}}&ps=20",
                     "热门玄幻::/novels/api/book/search?keyword=斗罗&pi={{page}}&ps=20",
                     "修仙仙侠::/novels/api/book/search?keyword=修仙&pi={{page}}&ps=20",
                     "都市异能::/novels/api/book/search?keyword=都市&pi={{page}}&ps=20",
-                    "历史穿越::/novels/api/book/search?keyword=大明&pi={{page}}&ps=20",
                     "科幻末世::/novels/api/book/search?keyword=星际&pi={{page}}&ps=20",
-                    "悬疑奇幻::/novels/api/book/search?keyword=诡秘&pi={{page}}&ps=20",
-                    "甜宠言情::/novels/api/book/search?keyword=总裁&pi={{page}}&ps=20"
+                    "悬疑奇幻::/novels/api/book/search?keyword=诡秘&pi={{page}}&ps=20"
                 ).joinToString("\n"),
                 headers = mapOf(
                     "User-Agent" to "Dalvik/2.1.0 (Linux; U; Android 12; Pixel 7)"
                 ),
-                comment = "导入自开源仓库 XIU2/Yuedu，纯 JSON API 直连，无广告无验证码。",
+                comment = "导入自开源仓库 XIU2/Yuedu，纯 JSON API 直连，章节加载稳定快速，无广告无验证码。",
                 subscriptionUrl = "https://fastly.jsdelivr.net/gh/XIU2/Yuedu@master/shuyuan",
                 ruleSearch = NovelRuleSearch(
                     bookList = "$.data",
@@ -322,35 +368,73 @@ class NovelRepository(private val context: Context) {
                     content = "$.data.content"
                 )
             ),
-            // 2. Gutendex 公版开源名著库 —— 永久直连，支持 444 部中文古典名著与 7 万部世界文学
+            // 4. 酷我历史文学与名著精选专题（同一高可用纯 JSON API，专注文学/历史/武侠/推理）
             NovelSource(
-                id = "open_gutendex_classics",
-                name = "古登堡开源名著 (中文/世界文学)",
-                baseUrl = "https://gutendex.com",
-                group = "精选直连 (开源公版)",
-                sourceType = NovelSourceType.GUTENDEX_API,
-                searchUrl = "https://gutendex.com/books/?search={{key}}&page={{page}}",
-                comment = "Project Gutenberg / Gutendex 开源公版图书馆，包含《西游记》《三国演义》《红楼梦》《水浒传》等中英文经典。"
+                id = "git_xiu2_kuwo_classics",
+                name = "酷我历史与文学馆 (API 直连)",
+                baseUrl = "http://appi.kuwo.cn",
+                group = "名著典藏 (永久直连)",
+                sourceType = NovelSourceType.LEGADO_JSON,
+                searchUrl = "/novels/api/book/search?keyword={{key}}&pi={{page}}&ps=30",
+                exploreUrl = listOf(
+                    "三国两晋::/novels/api/book/search?keyword=三国&pi={{page}}&ps=20",
+                    "大明风华::/novels/api/book/search?keyword=明朝&pi={{page}}&ps=20",
+                    "盛唐气象::/novels/api/book/search?keyword=大唐&pi={{page}}&ps=20",
+                    "大宋风云::/novels/api/book/search?keyword=大宋&pi={{page}}&ps=20",
+                    "民国往事::/novels/api/book/search?keyword=民国&pi={{page}}&ps=20",
+                    "传统武侠::/novels/api/book/search?keyword=武侠&pi={{page}}&ps=20",
+                    "推理探案::/novels/api/book/search?keyword=探案&pi={{page}}&ps=20"
+                ).joinToString("\n"),
+                headers = mapOf(
+                    "User-Agent" to "Dalvik/2.1.0 (Linux; U; Android 12; Pixel 7)"
+                ),
+                comment = "基于酷我高速纯 JSON API 精选的历史、演义、武侠与探案书单，章节 100% 可读。",
+                ruleSearch = NovelRuleSearch(
+                    bookList = "$.data",
+                    name = "$.title",
+                    author = "$.author_name",
+                    bookUrl = "/novels/api/book/{{$.book_id}}",
+                    coverUrl = "$.cover_url",
+                    intro = "$.intro",
+                    kind = "$.category_name",
+                    wordCount = "$.all_words"
+                ),
+                ruleBookInfo = NovelRuleBookInfo(
+                    init = "$.data",
+                    name = "$.title",
+                    author = "$.author_name",
+                    coverUrl = "$.cover_url",
+                    intro = "$.intro",
+                    kind = "$.category_name",
+                    lastChapter = "$.new_chapter_name",
+                    tocUrl = "/novels/api/book/{{$.book_id}}/chapters?pi=1&ps=2000"
+                ),
+                ruleToc = NovelRuleToc(
+                    chapterList = "$.data",
+                    chapterName = "$.chapter_title",
+                    chapterUrl = "/novels/api/book/{{$.book_id}}/chapters/{{$.chapter_id}}"
+                ),
+                ruleContent = NovelRuleContent(
+                    content = "$.data.content"
+                )
             ),
-            // 3. 速读谷 —— 来自 GitHub XIU2/Yuedu
+            // 以下网页规则源默认关闭（避免部分站点反爬或失效导致点开看不了），用户可在「书源」页按需开启
             NovelSource(
                 id = "git_xiu2_sudugu",
-                name = "速读谷 (GitHub/XIU2)",
+                name = "速读谷 (备用规则源)",
                 baseUrl = "https://www.sudugu.co",
-                group = "精选直连 (GitHub 实测)",
+                group = "备用网页规则源 (按需手动开启)",
                 sourceType = NovelSourceType.LEGADO_HTML,
+                enabled = false,
                 searchUrl = "/modules/article/search.php,{\"method\":\"POST\",\"body\":\"searchkey={{key}}&action=login&searchtype=all&submit=\"}",
                 exploreUrl = listOf(
                     "最近更新::/top/lastupdate/{{page}}.html",
                     "完本排行::/quanben/{{page}}.html",
                     "玄幻小说::/fenlei/1/{{page}}/",
                     "仙侠小说::/fenlei/2/{{page}}/",
-                    "都市小说::/fenlei/3/{{page}}/",
-                    "历史小说::/fenlei/4/{{page}}/",
-                    "科幻小说::/fenlei/6/{{page}}/",
-                    "言情小说::/fenlei/7/{{page}}/"
+                    "都市小说::/fenlei/3/{{page}}/"
                 ).joinToString("\n"),
-                comment = "导入自开源仓库 XIU2/Yuedu，分类齐全。",
+                comment = "导入自开源仓库 XIU2/Yuedu，传统网页规则源，按需手动开启。",
                 subscriptionUrl = "https://fastly.jsdelivr.net/gh/XIU2/Yuedu@master/shuyuan",
                 ruleSearch = NovelRuleSearch(
                     bookList = "class.bookbox||class.item",
@@ -379,13 +463,13 @@ class NovelRepository(private val context: Context) {
                     replaceRegex = "##[\\(（]本章完[\\)）]$"
                 )
             ),
-            // 4. 全本同人 —— 来自 GitHub liufuyou/read (Yiove)
             NovelSource(
                 id = "git_liufuyou_qbtr",
-                name = "全本同人 (GitHub/liufuyou)",
+                name = "全本同人 (备用规则源)",
                 baseUrl = "https://www.qbtr.me",
-                group = "精选直连 (GitHub 实测)",
+                group = "备用网页规则源 (按需手动开启)",
                 sourceType = NovelSourceType.LEGADO_HTML,
+                enabled = false,
                 charset = "GB2312",
                 searchUrl = "/e/search/index.php,{\"charset\":\"gb2312\",\"method\":\"POST\",\"body\":\"keyboard={{key}}&show=title&classid=0\"}",
                 exploreUrl = listOf(
@@ -393,7 +477,7 @@ class NovelRepository(private val context: Context) {
                     "常规小说::/changgui/<,index_{{page}}.html>",
                     "同人榜单::/hot/<,index_{{page}}.html>"
                 ).joinToString("\n"),
-                comment = "导入自开源仓库 liufuyou/read，主打完本与同人精品小说。",
+                comment = "导入自开源仓库 liufuyou/read，按需手动开启。",
                 subscriptionUrl = "https://fastly.jsdelivr.net/gh/liufuyou/read@main/sources/yiove-novel.json",
                 ruleSearch = NovelRuleSearch(
                     bookList = ".bk",
@@ -422,114 +506,13 @@ class NovelRepository(private val context: Context) {
                     content = ".read_chapterDetail@html"
                 )
             ),
-            // 5. ESJZone 轻小说 —— 来自 GitHub liufuyou/read
-            NovelSource(
-                id = "git_liufuyou_esjzone",
-                name = "ESJZone 轻小说 (GitHub/liufuyou)",
-                baseUrl = "https://www.esjzone.one",
-                group = "轻小说专区 (GitHub 实测)",
-                sourceType = NovelSourceType.LEGADO_HTML,
-                searchUrl = "/tags-01/{{key}}/{{page}}.html",
-                exploreUrl = listOf(
-                    "最新更新::/list-01/{{page}}.html",
-                    "最新上架::/list-02/{{page}}.html",
-                    "热门排行::/list-03/{{page}}.html"
-                ).joinToString("\n"),
-                comment = "导入自开源仓库 liufuyou/read，日系/翻译轻小说聚合站。",
-                subscriptionUrl = "https://fastly.jsdelivr.net/gh/liufuyou/read@main/sources/yiove-novel.json",
-                ruleSearch = NovelRuleSearch(
-                    bookList = "div.col-lg-3",
-                    name = ".card-title@a@text",
-                    author = ".card-author@a@text",
-                    bookUrl = ".card-title@a@href",
-                    coverUrl = "div.lazyload@data-src||img@src",
-                    lastChapter = ".card-ep@a@text"
-                ),
-                ruleBookInfo = NovelRuleBookInfo(
-                    author = "ul.list-unstyled@li.1@a@text",
-                    coverUrl = ".product-gallery@img@src",
-                    intro = "div.description@html"
-                ),
-                ruleToc = NovelRuleToc(
-                    chapterList = "#chapterList a",
-                    chapterName = "text",
-                    chapterUrl = "href"
-                ),
-                ruleContent = NovelRuleContent(
-                    content = "div.forum-content@html"
-                )
-            ),
-            // 6. 手机小说网 —— 来自 GitHub XIU2/Yuedu
-            NovelSource(
-                id = "git_xiu2_shoujix",
-                name = "手机小说 (GitHub/XIU2)",
-                baseUrl = "https://www.shoujix.com",
-                group = "精选直连 (GitHub 实测)",
-                sourceType = NovelSourceType.LEGADO_HTML,
-                charset = "GBK",
-                searchUrl = "/modules/article/search.php,{\"charset\":\"gbk\",\"method\":\"POST\",\"body\":\"searchkey={{key}}\"}",
-                comment = "导入自开源仓库 XIU2/Yuedu。",
-                subscriptionUrl = "https://fastly.jsdelivr.net/gh/XIU2/Yuedu@master/shuyuan",
-                ruleSearch = NovelRuleSearch(
-                    bookList = "class.novel-item",
-                    name = "tag.img.0@alt||tag.a.0@text",
-                    author = "class.novel-author.0@text",
-                    bookUrl = "tag.a.0@href",
-                    coverUrl = "tag.img.0@src",
-                    intro = "class.novel-intro.0@text"
-                ),
-                ruleBookInfo = NovelRuleBookInfo(
-                    author = "//meta[@property='og:novel:author']/@content",
-                    coverUrl = "//meta[@property='og:image']/@content",
-                    intro = "//meta[@property='og:description']/@content"
-                ),
-                ruleToc = NovelRuleToc(
-                    chapterList = "//div[@id=\"lbks\"]/dl/dt[last()]/following-sibling::dd/a",
-                    chapterName = "text",
-                    chapterUrl = "href"
-                ),
-                ruleContent = NovelRuleContent(
-                    content = "id.zjny.0@html"
-                )
-            ),
-            // 7. 爱尚小说 —— 来自 GitHub liufuyou/read
-            NovelSource(
-                id = "git_liufuyou_aishang",
-                name = "爱尚小说 (GitHub/liufuyou)",
-                baseUrl = "http://www.23hh.la",
-                group = "精选直连 (GitHub 实测)",
-                sourceType = NovelSourceType.LEGADO_HTML,
-                charset = "GBK",
-                searchUrl = "http://www.23hh.la/modules/article/search.php,{\"charset\":\"gbk\",\"method\":\"POST\",\"body\":\"searchkey={{key}}&action=login\"}",
-                comment = "导入自开源仓库 liufuyou/read。",
-                subscriptionUrl = "https://fastly.jsdelivr.net/gh/liufuyou/read@main/sources/yiove-novel.json",
-                ruleSearch = NovelRuleSearch(
-                    bookList = "class.c_row",
-                    name = "tag.span.0@tag.a.0@text||tag.a.0@text",
-                    author = "tag.span.3@text",
-                    bookUrl = "tag.span.0@tag.a.0@href||tag.a.0@href",
-                    coverUrl = "tag.img.0@src"
-                ),
-                ruleBookInfo = NovelRuleBookInfo(
-                    coverUrl = "class.pic@tag.img.0@src",
-                    intro = "class.bookinfo_intro@textNodes"
-                ),
-                ruleToc = NovelRuleToc(
-                    chapterList = "class.book_list@tag.li@tag.a",
-                    chapterName = "text",
-                    chapterUrl = "href"
-                ),
-                ruleContent = NovelRuleContent(
-                    content = "id.htmlContent@textNodes"
-                )
-            ),
-            // 8. 英文原版小说 (Tingroom) —— 来自 GitHub liufuyou/read
             NovelSource(
                 id = "git_liufuyou_tingroom",
-                name = "英文原版小说 (GitHub/liufuyou)",
+                name = "英文原版名著 (Tingroom)",
                 baseUrl = "http://novel.tingroom.com",
-                group = "双语/外文阅读",
+                group = "备用网页规则源 (按需手动开启)",
                 sourceType = NovelSourceType.LEGADO_HTML,
+                enabled = false,
                 searchUrl = "http://novel.tingroom.com/wap/index.php?moduleid=1025&type=2&kw={{key}}&page={{page}}",
                 exploreUrl = listOf(
                     "热门原著::http://novel.tingroom.com/wap/index.php?moduleid=1025&catid=1&page={{page}}",

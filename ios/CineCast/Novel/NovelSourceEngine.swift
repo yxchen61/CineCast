@@ -16,12 +16,23 @@ final class NovelSourceEngine {
     // MARK: - Explore Categories
 
     func getExploreCategories(source: NovelSource) -> [NovelExploreCategory] {
+        if source.sourceType == .WIKISOURCE_API {
+            return [
+                NovelExploreCategory(title: "四大名著与演义", url: "ws_cat://sida"),
+                NovelExploreCategory(title: "古典小说名著", url: "ws_cat://classical"),
+                NovelExploreCategory(title: "鲁迅与现当代经典", url: "ws_cat://modern"),
+                NovelExploreCategory(title: "史学典籍与兵法", url: "ws_cat://history"),
+                NovelExploreCategory(title: "国学哲学与诗词", url: "ws_cat://poetry")
+            ]
+        }
         if source.sourceType == .GUTENDEX_API {
             return [
-                NovelExploreCategory(title: "中文经典名著", url: "https://gutendex.com/books/?languages=zh&page={{page}}"),
-                NovelExploreCategory(title: "世界热门文学", url: "https://gutendex.com/books/?sort=popular&page={{page}}"),
-                NovelExploreCategory(title: "科幻与冒险", url: "https://gutendex.com/books/?topic=science+fiction&page={{page}}"),
-                NovelExploreCategory(title: "侦探与悬疑", url: "https://gutendex.com/books/?topic=detective&page={{page}}")
+                NovelExploreCategory(title: "中文古典名著", url: "https://gutendex.com/books/?languages=zh&sort=popular&page={{page}}"),
+                NovelExploreCategory(title: "世界必读名著", url: "https://gutendex.com/books/?sort=popular&page={{page}}"),
+                NovelExploreCategory(title: "侦探推理名著", url: "https://gutendex.com/books/?topic=detective&sort=popular&page={{page}}"),
+                NovelExploreCategory(title: "科幻冒险经典", url: "https://gutendex.com/books/?topic=science+fiction&sort=popular&page={{page}}"),
+                NovelExploreCategory(title: "历史哲学典籍", url: "https://gutendex.com/books/?topic=history&sort=popular&page={{page}}"),
+                NovelExploreCategory(title: "童话与成长文学", url: "https://gutendex.com/books/?topic=children&sort=popular&page={{page}}")
             ]
         }
         let trimmed = source.exploreUrl.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -50,6 +61,9 @@ final class NovelSourceEngine {
     // MARK: - Explore & Search
 
     func fetchExplore(source: NovelSource, categoryUrl: String, page: Int = 1) async throws -> [NovelBook] {
+        if source.sourceType == .WIKISOURCE_API {
+            return page > 1 ? [] : curatedWikisourceBooks(source: source, categoryUrl: categoryUrl)
+        }
         if source.sourceType == .GUTENDEX_API {
             let url = expandTemplate(categoryUrl, keyword: "", page: page)
             let raw = try await fetchText(urlSpec: url, source: source)
@@ -63,6 +77,9 @@ final class NovelSourceEngine {
     func search(source: NovelSource, keyword: String, page: Int = 1) async throws -> [NovelBook] {
         let q = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return [] }
+        if source.sourceType == .WIKISOURCE_API {
+            return await searchWikisourceBooks(source: source, keyword: q)
+        }
         if source.sourceType == .GUTENDEX_API {
             let enc = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? q
             let raw = try await fetchText(urlSpec: "https://gutendex.com/books/?search=\(enc)&page=\(page)", source: source)
@@ -75,6 +92,12 @@ final class NovelSourceEngine {
     }
 
     func fetchBookDetailAndToc(source: NovelSource, book: NovelBook) async throws -> (NovelBook, [NovelChapter]) {
+        if source.sourceType == .WIKISOURCE_API || book.bookUrl.hasPrefix("wikisource://") {
+            let chs = await fetchWikisourceChapters(source: source, book: book)
+            var updated = book
+            updated.latestChapter = chs.last?.title ?? "全本典藏"
+            return (updated, chs)
+        }
         if source.sourceType == .GUTENDEX_API {
             let chapters = try await fetchGutendexChapters(book: book)
             var updated = book
@@ -117,6 +140,10 @@ final class NovelSourceEngine {
         if let inline = chapter.inlineContent, !inline.isEmpty {
             return inline
         }
+        if source.sourceType == .WIKISOURCE_API || chapter.url.hasPrefix("wikisource://") {
+            let page = String(chapter.url.dropFirst("wikisource://".count))
+            return try await fetchWikisourceChapterText(source: source, pageTitle: page)
+        }
         let raw = try await fetchText(urlSpec: chapter.url, source: source)
         if source.sourceType == .LEGADO_JSON || raw.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") {
             if let data = raw.data(using: .utf8),
@@ -136,14 +163,146 @@ final class NovelSourceEngine {
     func pingSource(_ source: NovelSource) async -> Int {
         let start = Date()
         do {
-            let probe = source.sourceType == .GUTENDEX_API
-                ? "https://gutendex.com/books/?languages=zh&page=1"
-                : source.baseUrl
+            let probe: String
+            switch source.sourceType {
+            case .WIKISOURCE_API: probe = "https://zh.wikisource.org/w/api.php?action=query&meta=siteinfo&format=json"
+            case .GUTENDEX_API: probe = "https://gutendex.com/books/?languages=zh&page=1"
+            default: probe = source.baseUrl
+            }
             let txt = try await fetchText(urlSpec: probe, source: source)
             return txt.count < 24 ? -1 : max(1, Int(Date().timeIntervalSince(start) * 1000))
         } catch {
             return -1
         }
+    }
+
+    // MARK: - Chinese Wikisource Classics Adapter
+
+    private static let wsCatalog: [String: [(title: String, page: String, author: String, kind: String, intro: String)]] = [
+        "ws_cat://sida": [
+            ("三国演义", "三國演義", "罗贯中", "四大名著", "魏蜀吴三国鼎立波澜壮阔的历史长篇演义（全120回简体）。"),
+            ("红楼梦", "紅樓夢", "曹雪芹", "四大名著", "中国古典小说巅峰之作（全120回简体）。"),
+            ("西游记", "西遊記", "吴承恩", "四大名著", "唐僧师徒西天取经神魔经典（全100回简体）。"),
+            ("水浒传", "水滸傳 (100回本)", "施耐庵", "四大名著", "梁山泊一百零八好汉英雄传奇（100回本）。"),
+            ("封神演义", "封神演義", "许仲琳", "神魔演义", "姜子牙伐纣封神的古典神魔名著。"),
+            ("隋唐演义", "隋唐演義", "褚人获", "历史演义", "瓦岗群雄与大唐盛世英雄演义。"),
+            ("东周列国志", "東周列國志", "冯梦龙", "历史演义", "春秋战国五百余年诸侯争霸长卷。")
+        ],
+        "ws_cat://classical": [
+            ("儒林外史", "儒林外史", "吴敬梓", "讽刺小说", "清代长篇讽刺小说高峰。"),
+            ("聊斋志异", "聊齋志異", "蒲松龄", "志怪短篇", "清代文言短篇志怪小说集大成之作。"),
+            ("镜花缘", "鏡花緣", "李汝珍", "奇幻古典", "海外游历奇异邦国的浪漫讽刺名著。"),
+            ("三侠五义", "三俠五義", "石玉昆", "侠义公案", "包拯断案与展昭白玉堂侠义传奇。"),
+            ("老残游记", "老殘遊記", "刘鹗", "晚清谴责", "游方郎中老残见闻录。"),
+            ("喻世明言", "喻世明言", "冯梦龙", "三言二拍", "明代白话短篇话本经典。"),
+            ("警世通言", "警世通言", "冯梦龙", "三言二拍", "收录白娘子、杜十娘等传世话本。")
+        ],
+        "ws_cat://modern": [
+            ("呐喊", "吶喊", "鲁迅", "现代名著", "收录《狂人日记》《孔乙己》《阿Q正传》等名篇。"),
+            ("彷徨", "彷徨", "鲁迅", "现代名著", "收录《祝福》《伤逝》《孤独者》等名篇。"),
+            ("朝花夕拾", "朝花夕拾", "鲁迅", "散文经典", "收录《从百草园到三味书屋》《藤野先生》等回忆散文。"),
+            ("野草", "野草", "鲁迅", "散文诗集", "收录《秋夜》《雪》《好的故事》等散文诗。"),
+            ("孔乙己（单篇）", "孔乙己", "鲁迅", "短篇经典", "鲁迅短篇小说不朽代表作。"),
+            ("阿Q正传（全本）", "阿Q正傳", "鲁迅", "中篇经典", "国民性批判经典杰作。")
+        ],
+        "ws_cat://history": [
+            ("史记", "史記", "司马迁", "史学名著", "中国第一部纪传体通史。"),
+            ("世说新语", "世說新語", "刘义庆", "魏晋笔记", "魏晋名士风度与清谈轶事。"),
+            ("孙子兵法", "孫子兵法", "孙武", "兵学圣典", "世界最古老的军事战略巨著。"),
+            ("山海经", "山海經", "先秦佚名", "上古神话", "上古神话与地理异兽奇书。"),
+            ("搜神记", "搜神記", "干宝", "志怪典籍", "东晋志怪传说名著。")
+        ],
+        "ws_cat://poetry": [
+            ("论语", "論語", "孔子及其弟子", "儒家经典", "核心国学思想典籍。"),
+            ("道德经", "道德經", "老子", "道家经典", "五千言东方哲学智慧。"),
+            ("庄子", "莊子", "庄周", "道家经典", "《逍遥游》《秋水》等哲学与文学瑰宝。"),
+            ("菜根谭", "菜根譚", "洪应明", "修身格言", "儒释道处世修身经典语录。"),
+            ("古文观止", "古文觀止", "吴楚材 编", "古文选集", "传世经典古文精选。"),
+            ("唐诗三百首", "唐詩三百首", "蘅塘退士 编", "古典诗词", "家喻户晓的唐代诗歌精选。"),
+            ("诗经", "詩經", "先秦总集", "古典诗词", "中国最早的诗歌总集。")
+        ]
+    ]
+
+    private func curatedWikisourceBooks(source: NovelSource, categoryUrl: String) -> [NovelBook] {
+        let list = Self.wsCatalog[categoryUrl] ?? Self.wsCatalog.values.flatMap { $0 }
+        return list.map { e in
+            NovelBook(
+                id: "ws_\(abs(e.page.hashValue))",
+                sourceId: source.id,
+                sourceName: source.name,
+                title: e.title,
+                author: e.author,
+                intro: e.intro,
+                kind: e.kind,
+                latestChapter: "维基文库全本 · 自动简体",
+                bookUrl: "wikisource://\(e.page)",
+                tocUrl: "wikisource://\(e.page)"
+            )
+        }
+    }
+
+    private func searchWikisourceBooks(source: NovelSource, keyword: String) async -> [NovelBook] {
+        let local = Self.wsCatalog.values.flatMap { $0 }
+            .filter { $0.title.localizedCaseInsensitiveContains(keyword) || $0.author.localizedCaseInsensitiveContains(keyword) }
+            .map { e in
+                NovelBook(id: "ws_\(abs(e.page.hashValue))", sourceId: source.id, sourceName: source.name, title: e.title, author: e.author, intro: e.intro, kind: e.kind, latestChapter: "维基文库全本", bookUrl: "wikisource://\(e.page)", tocUrl: "wikisource://\(e.page)")
+            }
+        var remote: [NovelBook] = []
+        let enc = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword
+        if let raw = try? await fetchText(urlSpec: "https://zh.wikisource.org/w/api.php?action=query&list=search&srsearch=\(enc)&srnamespace=0&srlimit=18&format=json", source: wsSource(source)),
+           let data = raw.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let q = obj["query"] as? [String: Any],
+           let arr = q["search"] as? [[String: Any]] {
+            var seen = Set<String>()
+            for item in arr {
+                let full = (item["title"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let root = full.components(separatedBy: "/").first ?? ""
+                guard !root.isEmpty, seen.insert(root).inserted else { continue }
+                remote.append(NovelBook(id: "ws_\(abs(root.hashValue))", sourceId: source.id, sourceName: source.name, title: root, author: "维基文库典藏", intro: stripHtmlTags(item["snippet"] as? String ?? ""), kind: "公版名著", latestChapter: "维基文库全本", bookUrl: "wikisource://\(root)", tocUrl: "wikisource://\(root)"))
+            }
+        }
+        var seenUrls = Set<String>()
+        return (local + remote).filter { seenUrls.insert($0.bookUrl).inserted }
+    }
+
+    private func fetchWikisourceChapters(source: NovelSource, book: NovelBook) async -> [NovelChapter] {
+        let pageTitle = String(book.bookUrl.dropFirst("wikisource://".count))
+        let encPrefix = "\(pageTitle)/".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? pageTitle
+        if let raw = try? await fetchText(urlSpec: "https://zh.wikisource.org/w/api.php?action=query&list=allpages&apprefix=\(encPrefix)&aplimit=250&format=json", source: wsSource(source)),
+           let data = raw.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let q = obj["query"] as? [String: Any],
+           let pages = q["allpages"] as? [[String: Any]],
+           pages.count >= 2 {
+            let titles = pages.compactMap { $0["title"] as? String }
+            return titles.enumerated().map { idx, full in
+                let display = full.replacingOccurrences(of: "\(pageTitle)/", with: "")
+                return NovelChapter(index: idx, title: display.isEmpty ? full : display, url: "wikisource://\(full)")
+            }
+        }
+        return [NovelChapter(index: 0, title: book.title, url: "wikisource://\(pageTitle)")]
+    }
+
+    private func fetchWikisourceChapterText(source: NovelSource, pageTitle: String) async throws -> String {
+        let enc = pageTitle.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? pageTitle
+        let raw = try await fetchText(urlSpec: "https://zh.wikisource.org/w/api.php?action=parse&page=\(enc)&prop=text&variant=zh-cn&redirects=1&format=json", source: wsSource(source))
+        guard let data = raw.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let parse = obj["parse"] as? [String: Any],
+              let textObj = parse["text"] as? [String: Any],
+              let html = textObj["*"] as? String else {
+            throw NSError(domain: "CineCastNovel", code: -1, userInfo: [NSLocalizedDescriptionKey: "未能解析维基文库正文"])
+        }
+        let noTables = html.replacingOccurrences(of: #"<table[\s\S]*?</table>"#, with: "", options: .regularExpression)
+        let extracted = extractReadableHtmlContent(noTables)
+        return cleanParagraphs(extracted)
+    }
+
+    private func wsSource(_ source: NovelSource) -> NovelSource {
+        var copy = source
+        copy.headers["User-Agent"] = "CineCastReader/1.4 (https://github.com/yxchen61/CineCast; iOS)"
+        return copy
     }
 
     // MARK: - GitHub Legado Book Source JSON Importer

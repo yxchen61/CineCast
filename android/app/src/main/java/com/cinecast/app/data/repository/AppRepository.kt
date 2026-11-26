@@ -66,14 +66,12 @@ class AppRepository(private val context: Context) {
         val loadedSources = if (rawLoaded == null) {
             defaultList
         } else {
-            // Merge newly verified domestic-direct default sources & retire broken v1 URLs
+            // Merge newly verified default sources (including v1.4.0 English Cartoon sources) & retire dead v1 URLs
             val deadUrls = setOf(
                 "https://cj.ffzyapi.com/api.php/provide/vod/",
                 "https://cj.ffzyapi.com/api.php/provide/vod/at/xml/",
                 "https://bfzyapi.com/api.php/provide/vod/",
-                "https://caiji.dyttzyapi.com/api.php/provide/vod/",
                 "https://api.wujinapi.me/api.php/provide/vod/",
-                "https://cj.lziapi.com/api.php/provide/vod/",
                 "https://suoniapi.com/api.php/provide/vod/",
                 "http://cj.ffzyapi.com/api.php/provide/vod/",
                 "http://cj.ffzyapi.com/api.php/provide/vod/at/xml/"
@@ -387,6 +385,56 @@ class AppRepository(private val context: Context) {
                 type = SourceType.MACCMS_JSON,
                 apiUrl = "https://api.maoyanapi.top/api.php/provide/vod/",
                 group = "内置精选 (真机实测直连)"
+            ),
+            // v1.4.0 新增：实测高速直连且含丰富英文动画/欧美少儿动画资源的视频源
+            VideoSource(
+                id = "subo_en_cartoon",
+                name = "速播动漫 (英文动画/欧美动漫)",
+                type = SourceType.MACCMS_JSON,
+                apiUrl = "https://subocaiji.com/api.php/provide/vod/",
+                group = "英文动画 / 欧美动漫精选"
+            ),
+            VideoSource(
+                id = "guangsu_en_cartoon",
+                name = "光速动漫 (英文版/迪士尼动画)",
+                type = SourceType.MACCMS_JSON,
+                apiUrl = "https://api.guangsuapi.com/api.php/provide/vod/",
+                group = "英文动画 / 欧美动漫精选"
+            ),
+            VideoSource(
+                id = "huohu_en_cartoon",
+                name = "火狐动漫 (英文动画/海绵宝宝/布鲁伊)",
+                type = SourceType.MACCMS_JSON,
+                apiUrl = "https://hhzyapi.com/api.php/provide/vod/",
+                group = "英文动画 / 欧美动漫精选"
+            ),
+            VideoSource(
+                id = "dytt_en_cartoon",
+                name = "电影天堂动漫 (迪士尼/汪汪队/欧美动漫)",
+                type = SourceType.MACCMS_JSON,
+                apiUrl = "https://caiji.dyttzyapi.com/api.php/provide/vod/",
+                group = "英文动画 / 欧美动漫精选"
+            ),
+            VideoSource(
+                id = "zy1080_en_cartoon",
+                name = "优质1080动画 (欧美少儿/英语动画)",
+                type = SourceType.MACCMS_JSON,
+                apiUrl = "https://api.1080zyku.com/inc/apijson.php",
+                group = "英文动画 / 欧美动漫精选"
+            ),
+            VideoSource(
+                id = "web_bili_en_cartoon",
+                name = "B站英文动画专区 (网页嗅探)",
+                type = SourceType.WEB_SNIFFER,
+                apiUrl = "https://m.bilibili.com/search?keyword=%E8%8B%B1%E6%96%87%E5%8A%A8%E7%94%BB%E7%89%87",
+                group = "英文动画 / 欧美动漫精选"
+            ),
+            VideoSource(
+                id = "web_pbs_kids",
+                name = "PBS Kids 英语原版动画 (网页嗅探)",
+                type = SourceType.WEB_SNIFFER,
+                apiUrl = "https://pbskids.org/video/",
+                group = "英文动画 / 欧美动漫精选"
             ),
             VideoSource(
                 id = "web_bilibili",

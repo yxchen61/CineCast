@@ -922,7 +922,7 @@ private fun NovelSourcesPane(
 
     val filtered = remember(sources, filterTab) {
         when (filterTab) {
-            1 -> sources.filter { it.sourceType == NovelSourceType.LEGADO_JSON || it.sourceType == NovelSourceType.GUTENDEX_API }
+            1 -> sources.filter { it.sourceType != NovelSourceType.LEGADO_HTML }
             2 -> sources.filter { it.sourceType == NovelSourceType.LEGADO_HTML }
             3 -> sources.filter { it.enabled }
             else -> sources

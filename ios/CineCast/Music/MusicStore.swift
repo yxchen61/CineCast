@@ -36,6 +36,11 @@ final class MusicStore: ObservableObject {
 
     private var player: AVPlayer?
     private var timeObserver: Any?
+    private var endObserver: NSObjectProtocol?
+    private var failObserver: NSObjectProtocol?
+    private var itemStatusObserver: NSKeyValueObservation?
+    private var triedSourceIds: Set<String> = []
+    private var consecutiveAutoSkipCount: Int = 0
     private let encoder: JSONEncoder = { let e = JSONEncoder(); e.outputFormatting = [.prettyPrinted]; return e }()
     private let decoder = JSONDecoder()
     private var docsDir: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
@@ -127,31 +132,68 @@ final class MusicStore: ObservableObject {
     func playFromList(_ list: [MusicTrack], index: Int) {
         guard !list.isEmpty, index >= 0, index < list.count else { return }
         queue = list
-        Task { await playIndex(index) }
+        Task { await playIndex(index, resetFailover: true, isAutoAdvance: false) }
     }
 
-    func playIndex(_ index: Int) async {
+    func playIndex(_ index: Int, resetFailover: Bool = true, isAutoAdvance: Bool = false) async {
         guard index >= 0, index < queue.count else { return }
         let rawTrack = queue[index]
         guard let src = sources.first(where: { $0.id == rawTrack.sourceId }) ?? activeSource else { return }
+        if resetFailover { triedSourceIds.removeAll() }
+        if !isAutoAdvance { consecutiveAutoSkipCount = 0 }
+        triedSourceIds.insert(src.id)
+
         currentIndex = index
         currentTrack = rawTrack
         isResolving = true
         let resolved = await MusicSourceEngine.shared.resolvePlayableTrack(source: src, track: rawTrack)
         isResolving = false
-        queue[index] = resolved
-        currentTrack = resolved
-        lyrics = MusicSourceEngine.parseLrc(resolved.rawLyric)
-        guard let url = URL(string: resolved.streamUrl), !resolved.streamUrl.isEmpty else {
-            showToast("当前音源暂无此曲音频流")
+        guard !resolved.streamUrl.isEmpty, URL(string: resolved.streamUrl) != nil else {
+            await autoSwitchSameSongOrAdvance(index: index, failedTrack: rawTrack)
             return
         }
+        startAvPlayback(index: index, resolved: resolved)
+    }
+
+    private func startAvPlayback(index: Int, resolved: MusicTrack) {
+        guard let url = URL(string: resolved.streamUrl) else { return }
+        if index >= 0 && index < queue.count { queue[index] = resolved }
+        currentIndex = index
+        currentTrack = resolved
+        lyrics = MusicSourceEngine.parseLrc(resolved.rawLyric)
+
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
         try? AVAudioSession.sharedInstance().setActive(true)
-        if let obs = timeObserver { player?.removeTimeObserver(obs); timeObserver = nil }
+        cleanupObservers()
+
         let item = AVPlayerItem(url: url)
         let p = AVPlayer(playerItem: item)
         player = p
+
+        endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, !self.queue.isEmpty else { return }
+                let nextIdx = (self.currentIndex + 1) % self.queue.count
+                await self.playIndex(nextIdx, resetFailover: true, isAutoAdvance: true)
+            }
+        }
+        failObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let cur = self.currentTrack else { return }
+                await self.autoSwitchSameSongOrAdvance(index: self.currentIndex, failedTrack: cur)
+            }
+        }
+        itemStatusObserver = item.observe(\.status, options: [.new]) { [weak self] observedItem, _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if observedItem.status == .readyToPlay {
+                    self.consecutiveAutoSkipCount = 0
+                } else if observedItem.status == .failed, let cur = self.currentTrack {
+                    await self.autoSwitchSameSongOrAdvance(index: self.currentIndex, failedTrack: cur)
+                }
+            }
+        }
+
         timeObserver = p.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.4, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor in
                 guard let self else { return }
@@ -163,6 +205,43 @@ final class MusicStore: ObservableObject {
         }
         p.play()
         isPlaying = true
+    }
+
+    private func autoSwitchSameSongOrAdvance(index: Int, failedTrack: MusicTrack) async {
+        let remaining = enabledSources.filter {
+            $0.searchable && !triedSourceIds.contains($0.id) && $0.sourceType != .RADIO_BROWSER && $0.sourceType != .M3U_AUDIO
+        }
+        for altSrc in remaining {
+            triedSourceIds.insert(altSrc.id)
+            let q = "\(failedTrack.title) \(failedTrack.artist.components(separatedBy: "/").first ?? "")"
+            let found = ((try? await MusicSourceEngine.shared.search(source: altSrc, keyword: q)) ?? [])
+            let list = found.isEmpty ? ((try? await MusicSourceEngine.shared.search(source: altSrc, keyword: failedTrack.title)) ?? []) : found
+            if let cand = list.first(where: { $0.title.localizedCaseInsensitiveContains(failedTrack.title) || failedTrack.title.localizedCaseInsensitiveContains($0.title) }) {
+                let resolved = await MusicSourceEngine.shared.resolvePlayableTrack(source: altSrc, track: cand)
+                if !resolved.streamUrl.isEmpty, URL(string: resolved.streamUrl) != nil {
+                    showToast("音源异常，已自动切换「\(altSrc.name.components(separatedBy: " ").first ?? altSrc.name)」播放")
+                    startAvPlayback(index: index, resolved: resolved)
+                    return
+                }
+            }
+        }
+        let maxSkips = min(max(0, queue.count - 1), 5)
+        if queue.count > 1 && consecutiveAutoSkipCount < maxSkips {
+            consecutiveAutoSkipCount += 1
+            showToast("《\(failedTrack.title)》暂无可用音源，自动播放下一首")
+            await playIndex((index + 1) % queue.count, resetFailover: true, isAutoAdvance: true)
+        } else {
+            isPlaying = false
+            showToast("所有可用音源均无法播放此曲")
+        }
+    }
+
+    private func cleanupObservers() {
+        if let obs = timeObserver { player?.removeTimeObserver(obs); timeObserver = nil }
+        if let obs = endObserver { NotificationCenter.default.removeObserver(obs); endObserver = nil }
+        if let obs = failObserver { NotificationCenter.default.removeObserver(obs); failObserver = nil }
+        itemStatusObserver?.invalidate()
+        itemStatusObserver = nil
     }
 
     func togglePlayPause() {
@@ -182,13 +261,13 @@ final class MusicStore: ObservableObject {
 
     func nextTrack() {
         guard !queue.isEmpty else { return }
-        Task { await playIndex((currentIndex + 1) % queue.count) }
+        Task { await playIndex((currentIndex + 1) % queue.count, resetFailover: true, isAutoAdvance: false) }
     }
 
     func prevTrack() {
         guard !queue.isEmpty else { return }
         let idx = currentIndex <= 0 ? queue.count - 1 : currentIndex - 1
-        Task { await playIndex(idx) }
+        Task { await playIndex(idx, resetFailover: true, isAutoAdvance: false) }
     }
 
     func isFavorite(_ track: MusicTrack) -> Bool {

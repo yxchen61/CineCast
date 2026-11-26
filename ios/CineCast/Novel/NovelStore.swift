@@ -406,7 +406,24 @@ final class NovelStore: ObservableObject {
     // MARK: - Persistence & Defaults
 
     private func loadAll() {
-        sources = read("novel_sources.json") ?? Self.defaultNovelSources()
+        let defaults = Self.defaultNovelSources()
+        if let saved: [NovelSource] = read("novel_sources.json") {
+            let isPreV140 = !saved.contains(where: { $0.id == "open_wikisource_classics" })
+            let flakyIds: Set<String> = ["git_xiu2_sudugu", "git_liufuyou_qbtr"]
+            let cleaned = saved.map { src -> NovelSource in
+                if isPreV140 && flakyIds.contains(src.id) {
+                    var c = src; c.enabled = false; c.group = "备用网页规则源 (按需手动开启)"; return c
+                }
+                return src
+            }
+            let existingIds = Set(cleaned.map(\.id))
+            let missing = defaults.filter { !existingIds.contains($0.id) && $0.enabled }
+            sources = missing + cleaned
+            if !missing.isEmpty || isPreV140 { persist(sources, file: "novel_sources.json") }
+        } else {
+            sources = defaults
+            persist(sources, file: "novel_sources.json")
+        }
         activeSourceId = enabledSources.first?.id ?? sources.first?.id ?? ""
         subscriptions = read("novel_subs.json") ?? Self.defaultNovelSubscriptions()
         bookshelf = read("novel_bookshelf.json") ?? []
@@ -427,44 +444,69 @@ final class NovelStore: ObservableObject {
     static func defaultNovelSources() -> [NovelSource] {
         [
             NovelSource(
+                id: "open_wikisource_classics",
+                name: "维基文库 · 中文名著典藏 (100%可读)",
+                baseUrl: "https://zh.wikisource.org",
+                group: "名著典藏 (永久直连)",
+                sourceType: .WIKISOURCE_API,
+                searchUrl: "https://zh.wikisource.org/w/api.php"
+            ),
+            NovelSource(
+                id: "open_gutendex_classics",
+                name: "古登堡世界名著 (中英公版经典)",
+                baseUrl: "https://gutendex.com",
+                group: "名著典藏 (永久直连)",
+                sourceType: .GUTENDEX_API,
+                searchUrl: "https://gutendex.com/books/?search={{key}}&page={{page}}"
+            ),
+            NovelSource(
                 id: "git_xiu2_kuwo",
-                name: "酷我小说 (GitHub/XIU2 API)",
+                name: "酷我小说书城 (API 极速直连)",
                 baseUrl: "http://appi.kuwo.cn",
-                group: "精选直连 (GitHub 实测)",
+                group: "精选直连 (GitHub API)",
                 sourceType: .LEGADO_JSON,
                 searchUrl: "/novels/api/book/search?keyword={{key}}&pi={{page}}&ps=30",
-                exploreUrl: "热门玄幻::/novels/api/book/search?keyword=斗罗&pi={{page}}&ps=20\n修仙仙侠::/novels/api/book/search?keyword=修仙&pi={{page}}&ps=20\n都市异能::/novels/api/book/search?keyword=都市&pi={{page}}&ps=20\n历史穿越::/novels/api/book/search?keyword=大明&pi={{page}}&ps=20\n科幻末世::/novels/api/book/search?keyword=星际&pi={{page}}&ps=20",
+                exploreUrl: "历史演义::/novels/api/book/search?keyword=三国&pi={{page}}&ps=20\n古典红楼::/novels/api/book/search?keyword=红楼&pi={{page}}&ps=20\n明清风云::/novels/api/book/search?keyword=明朝&pi={{page}}&ps=20\n热门玄幻::/novels/api/book/search?keyword=斗罗&pi={{page}}&ps=20\n修仙仙侠::/novels/api/book/search?keyword=修仙&pi={{page}}&ps=20\n都市异能::/novels/api/book/search?keyword=都市&pi={{page}}&ps=20",
+                headers: ["User-Agent": "Dalvik/2.1.0 (Linux; U; Android 12; Pixel 7)"],
                 ruleSearch: NovelRuleSearch(bookList: "$.data", name: "$.title", author: "$.author_name", bookUrl: "/novels/api/book/{{$.book_id}}", coverUrl: "$.cover_url", intro: "$.intro", kind: "$.category_name", wordCount: "$.all_words"),
                 ruleBookInfo: NovelRuleBookInfo(`init`: "$.data", name: "$.title", author: "$.author_name", coverUrl: "$.cover_url", intro: "$.intro", kind: "$.category_name", lastChapter: "$.new_chapter_name", tocUrl: "/novels/api/book/{{$.book_id}}/chapters?pi=1&ps=2000"),
                 ruleToc: NovelRuleToc(chapterList: "$.data", chapterName: "$.chapter_title", chapterUrl: "/novels/api/book/{{$.book_id}}/chapters/{{$.chapter_id}}"),
                 ruleContent: NovelRuleContent(content: "$.data.content")
             ),
             NovelSource(
-                id: "open_gutendex_classics",
-                name: "古登堡开源名著 (中文/世界文学)",
-                baseUrl: "https://gutendex.com",
-                group: "精选直连 (开源公版)",
-                sourceType: .GUTENDEX_API,
-                searchUrl: "https://gutendex.com/books/?search={{key}}&page={{page}}"
+                id: "git_xiu2_kuwo_classics",
+                name: "酷我历史与文学馆 (API 直连)",
+                baseUrl: "http://appi.kuwo.cn",
+                group: "名著典藏 (永久直连)",
+                sourceType: .LEGADO_JSON,
+                searchUrl: "/novels/api/book/search?keyword={{key}}&pi={{page}}&ps=30",
+                exploreUrl: "三国两晋::/novels/api/book/search?keyword=三国&pi={{page}}&ps=20\n大明风华::/novels/api/book/search?keyword=明朝&pi={{page}}&ps=20\n盛唐气象::/novels/api/book/search?keyword=大唐&pi={{page}}&ps=20\n大宋风云::/novels/api/book/search?keyword=大宋&pi={{page}}&ps=20\n民国往事::/novels/api/book/search?keyword=民国&pi={{page}}&ps=20\n传统武侠::/novels/api/book/search?keyword=武侠&pi={{page}}&ps=20",
+                headers: ["User-Agent": "Dalvik/2.1.0 (Linux; U; Android 12; Pixel 7)"],
+                ruleSearch: NovelRuleSearch(bookList: "$.data", name: "$.title", author: "$.author_name", bookUrl: "/novels/api/book/{{$.book_id}}", coverUrl: "$.cover_url", intro: "$.intro", kind: "$.category_name", wordCount: "$.all_words"),
+                ruleBookInfo: NovelRuleBookInfo(`init`: "$.data", name: "$.title", author: "$.author_name", coverUrl: "$.cover_url", intro: "$.intro", kind: "$.category_name", lastChapter: "$.new_chapter_name", tocUrl: "/novels/api/book/{{$.book_id}}/chapters?pi=1&ps=2000"),
+                ruleToc: NovelRuleToc(chapterList: "$.data", chapterName: "$.chapter_title", chapterUrl: "/novels/api/book/{{$.book_id}}/chapters/{{$.chapter_id}}"),
+                ruleContent: NovelRuleContent(content: "$.data.content")
             ),
             NovelSource(
                 id: "git_xiu2_sudugu",
-                name: "速读谷 (GitHub/XIU2)",
+                name: "速读谷 (备用规则源)",
                 baseUrl: "https://www.sudugu.co",
-                group: "精选直连 (GitHub 实测)",
+                group: "备用网页规则源 (按需手动开启)",
                 sourceType: .LEGADO_HTML,
+                enabled: false,
                 searchUrl: "/modules/article/search.php,{\"method\":\"POST\",\"body\":\"searchkey={{key}}&action=login&searchtype=all&submit=\"}",
-                exploreUrl: "最近更新::/top/lastupdate/{{page}}.html\n完本排行::/quanben/{{page}}.html\n玄幻小说::/fenlei/1/{{page}}/\n都市小说::/fenlei/3/{{page}}/"
+                exploreUrl: "最近更新::/top/lastupdate/{{page}}.html\n完本排行::/quanben/{{page}}.html"
             ),
             NovelSource(
                 id: "git_liufuyou_qbtr",
-                name: "全本同人 (GitHub/liufuyou)",
+                name: "全本同人 (备用规则源)",
                 baseUrl: "https://www.qbtr.me",
-                group: "精选直连 (GitHub 实测)",
+                group: "备用网页规则源 (按需手动开启)",
                 sourceType: .LEGADO_HTML,
+                enabled: false,
                 charset: "GB2312",
                 searchUrl: "/e/search/index.php,{\"charset\":\"gb2312\",\"method\":\"POST\",\"body\":\"keyboard={{key}}&show=title&classid=0\"}",
-                exploreUrl: "同人小说::/tongren/\n常规小说::/changgui/\n同人榜单::/hot/"
+                exploreUrl: "同人小说::/tongren/\n常规小说::/changgui/"
             )
         ]
     }

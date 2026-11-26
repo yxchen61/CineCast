@@ -433,7 +433,16 @@ final class AppStore: ObservableObject {
     // MARK: - Persistence & Defaults
 
     private func loadAll() {
-        sources = read("sources.json") ?? Self.defaultSources()
+        let defaults = Self.defaultSources()
+        if let saved: [VideoSource] = read("sources.json") {
+            let existingUrls = Set(saved.map(\.apiUrl))
+            let missing = defaults.filter { !existingUrls.contains($0.apiUrl) }
+            sources = missing.isEmpty ? saved : (saved + missing)
+            if !missing.isEmpty { persist(sources, file: "sources.json") }
+        } else {
+            sources = defaults
+            persist(sources, file: "sources.json")
+        }
         activeSourceId = activeApiSources.first?.id ?? sources.first?.id ?? ""
         subscriptions = read("subs.json") ?? Self.defaultSubscriptions()
         liveSources = read("lives.json") ?? Self.defaultLiveSources()
@@ -467,6 +476,13 @@ final class AppStore: ObservableObject {
             VideoSource(id: "xinlang_json", name: "新浪资源 (高清直链)", type: .MACCMS_JSON, apiUrl: "https://api.xinlangapi.com/xinlangapi.php/provide/vod/", group: "内置精选 (实测直连)"),
             VideoSource(id: "modu_json", name: "魔都资源 (动漫影视)", type: .MACCMS_JSON, apiUrl: "https://caiji.moduapi.cc/api.php/provide/vod/", group: "内置精选 (实测直连)"),
             VideoSource(id: "maoyan_json", name: "猫眼资源 (高清直链)", type: .MACCMS_JSON, apiUrl: "https://api.maoyanapi.top/api.php/provide/vod/", group: "内置精选 (实测直连)"),
+            VideoSource(id: "subo_en_cartoon", name: "速播动漫 (英文动画/欧美动漫)", type: .MACCMS_JSON, apiUrl: "https://subocaiji.com/api.php/provide/vod/", group: "英文动画 / 欧美动漫精选"),
+            VideoSource(id: "guangsu_en_cartoon", name: "光速动漫 (英文版/迪士尼动画)", type: .MACCMS_JSON, apiUrl: "https://api.guangsuapi.com/api.php/provide/vod/", group: "英文动画 / 欧美动漫精选"),
+            VideoSource(id: "huohu_en_cartoon", name: "火狐动漫 (英文动画/海绵宝宝/布鲁伊)", type: .MACCMS_JSON, apiUrl: "https://hhzyapi.com/api.php/provide/vod/", group: "英文动画 / 欧美动漫精选"),
+            VideoSource(id: "dytt_en_cartoon", name: "电影天堂动漫 (迪士尼/汪汪队/欧美动漫)", type: .MACCMS_JSON, apiUrl: "https://caiji.dyttzyapi.com/api.php/provide/vod/", group: "英文动画 / 欧美动漫精选"),
+            VideoSource(id: "zy1080_en_cartoon", name: "优质1080动画 (欧美少儿/英语动画)", type: .MACCMS_JSON, apiUrl: "https://api.1080zyku.com/inc/apijson.php", group: "英文动画 / 欧美动漫精选"),
+            VideoSource(id: "web_bili_en_cartoon", name: "B站英文动画专区 (网页嗅探)", type: .WEB_SNIFFER, apiUrl: "https://m.bilibili.com/search?keyword=%E8%8B%B1%E6%96%87%E5%8A%A8%E7%94%BB%E7%89%87", group: "英文动画 / 欧美动漫精选"),
+            VideoSource(id: "web_pbs_kids", name: "PBS Kids 英语原版动画 (网页嗅探)", type: .WEB_SNIFFER, apiUrl: "https://pbskids.org/video/", group: "英文动画 / 欧美动漫精选"),
             VideoSource(id: "web_bilibili", name: "哔哩哔哩 (网页嗅探)", type: .WEB_SNIFFER, apiUrl: "https://m.bilibili.com/", group: "网页嗅探站点"),
             VideoSource(id: "web_qq", name: "腾讯视频 (解析/嗅探)", type: .WEB_SNIFFER, apiUrl: "https://m.v.qq.com/", group: "网页嗅探站点"),
             VideoSource(id: "web_iqiyi", name: "爱奇艺 (解析/嗅探)", type: .WEB_SNIFFER, apiUrl: "https://m.iqiyi.com/", group: "网页嗅探站点")

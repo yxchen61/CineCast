@@ -32,6 +32,10 @@ class MusicAudioController(context: Context) {
     private val appContext = context.applicationContext
     private var exoPlayer: ExoPlayer? = null
     private var onTrackEndedCallback: (() -> Unit)? = null
+    private var onTrackErrorCallback: ((String) -> Unit)? = null
+    private var onTrackReadyCallback: (() -> Unit)? = null
+    private var hasSignaledEndedForCurrentItem: Boolean = false
+    private var hasSignaledErrorForCurrentItem: Boolean = false
 
     private val _state = MutableStateFlow(AudioPlaybackState())
     val state: StateFlow<AudioPlaybackState> = _state.asStateFlow()
@@ -50,6 +54,7 @@ class MusicAudioController(context: Context) {
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
             .setAudioAttributes(audioAttrs, true)
             .setHandleAudioBecomingNoisy(true)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
             .also { player ->
                 player.addListener(object : Player.Listener {
@@ -65,7 +70,11 @@ class MusicAudioController(context: Context) {
                             durationMs = dur,
                             error = if (playbackState == Player.STATE_READY) null else _state.value.error
                         )
-                        if (playbackState == Player.STATE_ENDED) {
+                        if (playbackState == Player.STATE_READY) {
+                            onTrackReadyCallback?.invoke()
+                        }
+                        if (playbackState == Player.STATE_ENDED && !hasSignaledEndedForCurrentItem) {
+                            hasSignaledEndedForCurrentItem = true
                             onTrackEndedCallback?.invoke()
                         }
                     }
@@ -76,6 +85,10 @@ class MusicAudioController(context: Context) {
                             isBuffering = false,
                             error = "音频流播放失败：${error.errorCodeName}"
                         )
+                        if (!hasSignaledErrorForCurrentItem) {
+                            hasSignaledErrorForCurrentItem = true
+                            onTrackErrorCallback?.invoke(error.errorCodeName)
+                        }
                     }
                 })
                 exoPlayer = player
@@ -86,8 +99,18 @@ class MusicAudioController(context: Context) {
         onTrackEndedCallback = callback
     }
 
+    fun setOnTrackError(callback: (String) -> Unit) {
+        onTrackErrorCallback = callback
+    }
+
+    fun setOnTrackReady(callback: () -> Unit) {
+        onTrackReadyCallback = callback
+    }
+
     fun playUrl(url: String) {
         val player = ensurePlayer()
+        hasSignaledEndedForCurrentItem = false
+        hasSignaledErrorForCurrentItem = false
         _state.value = AudioPlaybackState(isBuffering = true)
         player.setMediaItem(MediaItem.fromUri(url))
         player.prepare()
@@ -113,8 +136,17 @@ class MusicAudioController(context: Context) {
         val player = exoPlayer ?: return
         val pos = player.currentPosition.coerceAtLeast(0L)
         val dur = player.duration.takeIf { it > 0 } ?: _state.value.durationMs
-        if (pos != _state.value.positionMs || dur != _state.value.durationMs) {
-            _state.value = _state.value.copy(positionMs = pos, durationMs = dur)
+        if (pos != _state.value.positionMs || dur != _state.value.durationMs || player.isPlaying != _state.value.isPlaying) {
+            _state.value = _state.value.copy(
+                isPlaying = player.isPlaying,
+                positionMs = pos,
+                durationMs = dur
+            )
+        }
+        // Fallback safety net: ensure track completion is never missed even if a state callback was dropped
+        if (player.playbackState == Player.STATE_ENDED && !hasSignaledEndedForCurrentItem) {
+            hasSignaledEndedForCurrentItem = true
+            onTrackEndedCallback?.invoke()
         }
     }
 

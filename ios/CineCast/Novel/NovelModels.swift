@@ -4,17 +4,19 @@ import SwiftUI
 // MARK: - 独立小说模块数据模型（与影视模型完全隔离）
 
 enum NovelSourceType: String, Codable, CaseIterable, Identifiable {
+    case WIKISOURCE_API
+    case GUTENDEX_API
     case LEGADO_JSON
     case LEGADO_HTML
-    case GUTENDEX_API
 
     var id: String { rawValue }
 
     var badge: String {
         switch self {
+        case .WIKISOURCE_API: return "典藏"
+        case .GUTENDEX_API: return "名著"
         case .LEGADO_JSON: return "API"
         case .LEGADO_HTML: return "规则"
-        case .GUTENDEX_API: return "名著"
         }
     }
 }

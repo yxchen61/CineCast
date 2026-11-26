@@ -111,7 +111,7 @@ struct LibraryView: View {
                 }
 
                 Section {
-                    Text("极光视界 CineCast iOS v1.3.0 · 影视 · 小说阅读 · 多源音乐 · SwiftUI")
+                    Text("极光视界 CineCast iOS v1.4.0 · 影视 · 小说名著 · 多源音乐 · SwiftUI")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }

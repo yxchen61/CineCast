@@ -196,4 +196,33 @@ class NovelEngineUnitTest {
         assertTrue(chapters[0].title.contains("第一回"))
         assertTrue(chapters[2].inlineContent.orEmpty().contains("如意金箍棒"))
     }
+
+    @Test
+    fun testWikisourceHtmlCleaningAndClassicsCategories() {
+        val engine = NovelSourceEngine()
+        val wsSource = com.cinecast.app.novel.model.NovelSource(
+            id = "open_wikisource_classics",
+            name = "维基文库名著典藏",
+            baseUrl = "https://zh.wikisource.org",
+            sourceType = NovelSourceType.WIKISOURCE_API
+        )
+        val cats = engine.getExploreCategories(wsSource)
+        assertEquals(5, cats.size)
+        assertEquals("四大名著与演义", cats[0].title)
+
+        val rawHtml = """
+            <div class="mw-parser-output">
+              <table class="headerContainer"><tr><td>导航栏上一回下一回</td></tr></table>
+              <span class="mw-editsection">[编辑]</span>
+              <p>话说天下大势，分久必合，合久必分。<sup class="reference">[1]</sup></p>
+              <p>周末七国分争，并入于秦。及秦灭之后，楚、汉分争，又并入于汉。</p>
+            </div>
+        """.trimIndent()
+        val cleaned = engine.parseWikisourceHtml(rawHtml)
+        assertTrue(cleaned.contains("话说天下大势，分久必合，合久必分。"))
+        assertTrue(cleaned.contains("周末七国分争"))
+        assertFalse(cleaned.contains("导航栏"))
+        assertFalse(cleaned.contains("[编辑]"))
+        assertFalse(cleaned.contains("[1]"))
+    }
 }

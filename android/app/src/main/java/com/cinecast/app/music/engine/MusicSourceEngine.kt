@@ -557,6 +557,59 @@ class MusicSourceEngine {
         private val lrcTimeRegex = Regex("""\[(\d{1,3}):(\d{2})(?:\.(\d{1,3}))?]""")
 
         /**
+         * 跨音源同曲容灾匹配算法：从候选列表中挑选与目标歌曲最匹配的同一首歌
+         */
+        fun pickBestSameSongCandidate(target: MusicTrack, candidates: List<MusicTrack>): MusicTrack? {
+            if (candidates.isEmpty()) return null
+            val targetTitle = normalizeSongToken(target.title)
+            val targetArtist = normalizeSongToken(target.artist.substringBefore("/").substringBefore("·"))
+            val unwantedKeywords = listOf("伴奏", "纯音乐", "dj版", "铃声", "翻唱", "karaoke", "instrumental")
+            val targetRawLower = target.title.lowercase()
+
+            return candidates
+                .map { cand ->
+                    val candTitle = normalizeSongToken(cand.title)
+                    val candArtist = normalizeSongToken(cand.artist)
+                    val candRawLower = cand.title.lowercase()
+                    var score = when {
+                        candTitle.isEmpty() || targetTitle.isEmpty() -> 0
+                        candTitle == targetTitle -> 100
+                        candTitle.contains(targetTitle) || targetTitle.contains(candTitle) -> {
+                            val ratio = minOf(candTitle.length, targetTitle.length).toFloat() /
+                                maxOf(candTitle.length, targetTitle.length).toFloat()
+                            if (ratio >= 0.45f) 65 else 0
+                        }
+                        else -> 0
+                    }
+                    if (score > 0 && targetArtist.isNotEmpty() && targetArtist != "未知歌手") {
+                        score += when {
+                            candArtist == targetArtist -> 50
+                            candArtist.contains(targetArtist) || targetArtist.contains(candArtist) -> 30
+                            else -> 0
+                        }
+                    }
+                    if (score > 0) {
+                        for (kw in unwantedKeywords) {
+                            if (candRawLower.contains(kw) && !targetRawLower.contains(kw)) {
+                                score -= 45
+                            }
+                        }
+                    }
+                    cand to score
+                }
+                .filter { it.second >= 50 }
+                .maxByOrNull { it.second }
+                ?.first
+        }
+
+        private fun normalizeSongToken(raw: String): String {
+            return raw.lowercase()
+                .replace(Regex("""[（(【\[].*?[）)】\]]"""), "")
+                .replace(Regex("""[\s\-_·.,!?'":;《》<>]"""), "")
+                .trim()
+        }
+
+        /**
          * 解析标准 LRC 同步歌词为按时间戳排序的歌词行列表
          */
         fun parseLrc(rawLrc: String): List<LrcLine> {
