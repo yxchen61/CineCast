@@ -25,6 +25,25 @@ struct MusicChartCategory: Codable, Identifiable, Equatable {
     var idOrQuery: String
 }
 
+enum ArtistCategory: String, CaseIterable, Identifiable {
+    case all = "全部热门"
+    case cnMale = "华语男歌手"
+    case cnFemale = "华语女歌手"
+    case cnGroup = "华语组合"
+    case western = "欧美流行"
+    case jpKr = "日韩歌手"
+    case instrumental = "轻音乐/纯音"
+
+    var id: String { rawValue }
+}
+
+struct MusicArtistProfile: Identifiable {
+    var id: String { "\(category.rawValue)_\(name)" }
+    let name: String
+    let category: ArtistCategory
+    let tag: String
+}
+
 struct MusicSource: Codable, Identifiable, Equatable {
     var id: String
     var name: String

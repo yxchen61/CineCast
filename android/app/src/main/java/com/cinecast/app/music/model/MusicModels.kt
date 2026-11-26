@@ -20,6 +20,23 @@ data class MusicChartCategory(
     val idOrQuery: String
 )
 
+enum class ArtistCategory(val label: String) {
+    ALL("全部热门"),
+    CN_MALE("华语男歌手"),
+    CN_FEMALE("华语女歌手"),
+    CN_GROUP("华语组合/乐队"),
+    WESTERN("欧美流行"),
+    JP_KR("日韩歌手"),
+    INSTRUMENTAL("轻音乐/纯音")
+}
+
+data class MusicArtistProfile(
+    val name: String,
+    val category: ArtistCategory,
+    val tag: String,
+    val accentColorHex: Long
+)
+
 @Serializable
 data class MusicSource(
     val id: String,

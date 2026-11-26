@@ -18,6 +18,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.LibraryBooks
+import androidx.compose.material.icons.automirrored.rounded.ManageSearch
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -25,6 +27,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
@@ -175,24 +178,32 @@ fun NovelHubScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            Icons.AutoMirrored.Rounded.MenuBook,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.AutoMirrored.Rounded.MenuBook,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
                         Spacer(Modifier.width(8.dp))
                         Text(
                             "极光阅读",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.width(10.dp))
                         if (currentSubTab == NovelSubTab.DISCOVER) {
                             Surface(
                                 onClick = { showSourcePicker = true },
                                 shape = RoundedCornerShape(18.dp),
-                                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.78f),
+                                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f),
                                 modifier = Modifier.weight(1f, fill = false)
                             ) {
                                 Row(
@@ -201,7 +212,8 @@ fun NovelHubScreen(
                                 ) {
                                     Text(
                                         text = activeSource?.name?.substringBefore(" ") ?: "选择书源",
-                                        style = MaterialTheme.typography.labelLarge,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
                                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -220,39 +232,65 @@ fun NovelHubScreen(
                             onClick = { isSearchMode = true },
                             colors = IconButtonDefaults.filledTonalIconButtonColors(
                                 containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                            )
+                            ),
+                            modifier = Modifier.size(38.dp)
                         ) {
-                            Icon(Icons.Rounded.Search, contentDescription = "搜索小说")
+                            Icon(Icons.Rounded.Search, contentDescription = "搜索小说", modifier = Modifier.size(20.dp))
                         }
                     }
 
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(8.dp))
 
-                    // Row 2: Google Material 3 Single-Choice Segmented Navigation (书架 | 书城 | 书源)
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        NovelSubTab.entries.forEachIndexed { idx, tab ->
-                            val badge = when (tab) {
-                                NovelSubTab.BOOKSHELF -> if (bookshelf.isNotEmpty()) " (${bookshelf.size})" else ""
-                                NovelSubTab.SOURCES -> " (${enabledSources.size})"
-                                NovelSubTab.DISCOVER -> ""
-                            }
-                            SegmentedButton(
-                                selected = currentSubTab == tab,
-                                onClick = { currentSubTab = tab },
-                                shape = SegmentedButtonDefaults.itemShape(index = idx, count = NovelSubTab.entries.size),
-                                icon = {
-                                    Icon(
-                                        imageVector = when (tab) {
-                                            NovelSubTab.BOOKSHELF -> Icons.Rounded.Bookmarks
-                                            NovelSubTab.DISCOVER -> Icons.Rounded.AutoStories
-                                            NovelSubTab.SOURCES -> Icons.Rounded.LibraryBooks
-                                        },
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
+                    // Row 2: Sleek Borderless Google Play Books Tonal Pill Tabs (书架 | 书城 | 书源)
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            NovelSubTab.entries.forEach { tab ->
+                                val selected = currentSubTab == tab
+                                val badge = when (tab) {
+                                    NovelSubTab.BOOKSHELF -> if (bookshelf.isNotEmpty()) " ${bookshelf.size}" else ""
+                                    NovelSubTab.SOURCES -> " ${enabledSources.size}"
+                                    NovelSubTab.DISCOVER -> ""
                                 }
-                            ) {
-                                Text(tab.label + badge, maxLines = 1)
+                                Surface(
+                                    onClick = { currentSubTab = tab },
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 6.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = when (tab) {
+                                                NovelSubTab.BOOKSHELF -> Icons.Rounded.Bookmarks
+                                                NovelSubTab.DISCOVER -> Icons.Rounded.AutoStories
+                                                NovelSubTab.SOURCES -> Icons.AutoMirrored.Rounded.LibraryBooks
+                                            },
+                                            contentDescription = null,
+                                            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(Modifier.width(5.dp))
+                                        Text(
+                                            tab.label + badge,
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -631,11 +669,21 @@ private fun NovelDiscoverPane(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 itemsIndexed(exploreState.categories) { idx, cat ->
-                    FilterChip(
-                        selected = exploreState.selectedCategoryIndex == idx,
+                    val sel = exploreState.selectedCategoryIndex == idx
+                    Surface(
                         onClick = { onSelectCategory(idx) },
-                        label = { Text(cat.title) }
-                    )
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerLow,
+                        tonalElevation = if (sel) 2.dp else 0.dp
+                    ) {
+                        Text(
+                            cat.title,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (sel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 15.dp, vertical = 7.dp)
+                        )
+                    }
                 }
             }
         }
@@ -676,12 +724,89 @@ private fun NovelDiscoverPane(
             }
 
             else -> {
+                val heroBook = exploreState.books.firstOrNull()
                 LazyColumn(
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(exploreState.books, key = { "${it.sourceId}::${it.bookUrl}" }) { book ->
+                    // Google Play Books Editorial Spotlight Card
+                    if (heroBook != null) {
+                        item {
+                            Card(
+                                onClick = { onBookClick(heroBook) },
+                                shape = RoundedCornerShape(24.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(
+                                                    MaterialTheme.colorScheme.primaryContainer,
+                                                    MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.72f)
+                                                )
+                                            )
+                                        )
+                                        .padding(16.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        NovelCoverArt(
+                                            title = heroBook.title,
+                                            coverUrl = heroBook.coverUrl,
+                                            modifier = Modifier
+                                                .width(78.dp)
+                                                .height(110.dp)
+                                        )
+                                        Spacer(Modifier.width(14.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Surface(
+                                                color = MaterialTheme.colorScheme.primary,
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Text(
+                                                    "编辑精选 · 好书推荐",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onPrimary,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                            Spacer(Modifier.height(6.dp))
+                                            Text(
+                                                heroBook.title,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                listOfNotNull(
+                                                    heroBook.author.takeIf { it.isNotBlank() },
+                                                    heroBook.kind.takeIf { it.isNotBlank() }
+                                                ).joinToString(" · "),
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                maxLines = 1
+                                            )
+                                            if (heroBook.intro.isNotBlank()) {
+                                                Spacer(Modifier.height(4.dp))
+                                                Text(
+                                                    heroBook.intro.replace("\n", " "),
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    items(exploreState.books.drop(if (heroBook != null) 1 else 0), key = { "${it.sourceId}::${it.bookUrl}" }) { book ->
                         NovelBookRowCard(book = book, onClick = { onBookClick(book) })
                     }
                     item {
@@ -723,7 +848,7 @@ private fun NovelSearchResultsPane(
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(28.dp)) {
                         Icon(
-                            Icons.Rounded.ManageSearch,
+                            Icons.AutoMirrored.Rounded.ManageSearch,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(48.dp)
@@ -1204,6 +1329,7 @@ fun NovelCoverArt(
     }
     Box(
         modifier = modifier
+            .shadow(6.dp, RoundedCornerShape(12.dp))
             .clip(RoundedCornerShape(12.dp))
             .background(Brush.verticalGradient(palette)),
         contentAlignment = Alignment.Center
@@ -1212,10 +1338,10 @@ fun NovelCoverArt(
             text = title.take(6),
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
-            color = Color.White.copy(alpha = 0.92f),
+            color = Color.White.copy(alpha = 0.94f),
             maxLines = 3,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(8.dp)
+            modifier = Modifier.padding(start = 12.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)
         )
         if (coverUrl.startsWith("http")) {
             AsyncImage(
@@ -1225,6 +1351,22 @@ fun NovelCoverArt(
                 modifier = Modifier.fillMaxSize()
             )
         }
+        // Subtle Google Play Books hardcover spine highlight on the left edge
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .fillMaxHeight()
+                .width(7.dp)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            Color.Black.copy(alpha = 0.24f),
+                            Color.White.copy(alpha = 0.16f),
+                            Color.Transparent
+                        )
+                    )
+                )
+        )
     }
 }
 

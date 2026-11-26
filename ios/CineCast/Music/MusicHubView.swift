@@ -4,7 +4,9 @@ struct MusicHubView: View {
     @EnvironmentObject var musicStore: MusicStore
     let onOpenPlayer: () -> Void
 
-    @State private var subTab = 0 // 0=音乐馆 1=我喜欢 2=音乐源
+    @State private var subTab = 0 // 0=音乐馆 1=歌手 2=我喜欢 3=音乐源
+    @State private var selectedArtistCategory: ArtistCategory = .all
+    @State private var artistInput = ""
     @State private var isSearchMode = false
     @State private var showSourcePicker = false
     @State private var subUrlInput = "https://fastly.jsdelivr.net/gh/Huibq/keep-alive/Music_Free/myPlugins.json"
@@ -57,8 +59,9 @@ struct MusicHubView: View {
 
                         Picker("音乐分区", selection: $subTab) {
                             Text("音乐馆").tag(0)
-                            Text("我喜欢(\(musicStore.favorites.count))").tag(1)
-                            Text("音乐源(\(musicStore.enabledSources.count))").tag(2)
+                            Text("歌手").tag(1)
+                            Text("喜欢(\(musicStore.favorites.count))").tag(2)
+                            Text("音源(\(musicStore.enabledSources.count))").tag(3)
                         }
                         .pickerStyle(.segmented)
                     }
@@ -74,7 +77,8 @@ struct MusicHubView: View {
                 } else {
                     switch subTab {
                     case 0: discoverBody
-                    case 1: favoritesBody
+                    case 1: artistsBody
+                    case 2: favoritesBody
                     default: sourcesBody
                     }
                 }
@@ -135,6 +139,87 @@ struct MusicHubView: View {
                     trackRow(t, list: musicStore.discoverTracks, idx: idx)
                 }.listStyle(.plain)
             }
+        }
+    }
+
+    private var artistsBody: some View {
+        let artists: [MusicArtistProfile] = [
+            MusicArtistProfile(name: "周杰伦", category: .cnMale, tag: "华语流行天王"),
+            MusicArtistProfile(name: "陈奕迅", category: .cnMale, tag: "粤语/国语金曲"),
+            MusicArtistProfile(name: "林俊杰", category: .cnMale, tag: "行走的CD"),
+            MusicArtistProfile(name: "薛之谦", category: .cnMale, tag: "深情创作歌手"),
+            MusicArtistProfile(name: "周深", category: .cnMale, tag: "天籁国风声线"),
+            MusicArtistProfile(name: "毛不易", category: .cnMale, tag: "治愈民谣男声"),
+            MusicArtistProfile(name: "邓紫棋", category: .cnFemale, tag: "铁肺创作天后"),
+            MusicArtistProfile(name: "王菲", category: .cnFemale, tag: "华语传奇天后"),
+            MusicArtistProfile(name: "孙燕姿", category: .cnFemale, tag: "治愈系天后"),
+            MusicArtistProfile(name: "张韶涵", category: .cnFemale, tag: "励志清亮高音"),
+            MusicArtistProfile(name: "五月天", category: .cnGroup, tag: "华语摇滚天团"),
+            MusicArtistProfile(name: "Beyond", category: .cnGroup, tag: "殿堂级粤语乐队"),
+            MusicArtistProfile(name: "告五人", category: .cnGroup, tag: "新世代人气乐团"),
+            MusicArtistProfile(name: "Taylor Swift", category: .western, tag: "全球流行天后"),
+            MusicArtistProfile(name: "Ed Sheeran", category: .western, tag: "英伦唱作人"),
+            MusicArtistProfile(name: "Coldplay", category: .western, tag: "英伦摇滚天团"),
+            MusicArtistProfile(name: "YOASOBI", category: .jpKr, tag: "日本现象级双人组"),
+            MusicArtistProfile(name: "米津玄师", category: .jpKr, tag: "全能创作鬼才"),
+            MusicArtistProfile(name: "IU", category: .jpKr, tag: "韩国国民创作女声"),
+            MusicArtistProfile(name: "久石让", category: .instrumental, tag: "宫崎骏配乐大师"),
+            MusicArtistProfile(name: "坂本龙一", category: .instrumental, tag: "现代钢琴大师"),
+            MusicArtistProfile(name: "班得瑞", category: .instrumental, tag: "自然治愈轻音乐")
+        ]
+        let filtered = artists.filter {
+            (selectedArtistCategory == .all || $0.category == selectedArtistCategory) &&
+            (artistInput.isEmpty || $0.name.localizedCaseInsensitiveContains(artistInput))
+        }
+        return VStack(spacing: 0) {
+            HStack {
+                TextField("输入歌手名精准搜歌...", text: $artistInput)
+                    .textFieldStyle(.roundedBorder)
+                Button("查歌") {
+                    if !artistInput.isEmpty {
+                        musicStore.searchQuery = artistInput
+                        isSearchMode = true
+                        musicStore.executeSearch()
+                    }
+                }
+                .buttonStyle(.borderedProminent).tint(.googleBlue)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 8)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(ArtistCategory.allCases) { cat in
+                        Button(cat.rawValue) { selectedArtistCategory = cat }
+                            .font(.caption.weight(.medium))
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(selectedArtistCategory == cat ? Color.googleBlue : Color(.secondarySystemBackground))
+                            .foregroundColor(selectedArtistCategory == cat ? .white : .primary)
+                            .clipShape(Capsule())
+                    }
+                }.padding(.horizontal, 14).padding(.vertical, 4)
+            }
+
+            List(filtered) { artist in
+                Button {
+                    musicStore.searchQuery = artist.name
+                    isSearchMode = true
+                    musicStore.executeSearch()
+                } label: {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle().fill(Color.googleBlue.opacity(0.85))
+                            Text(String(artist.name.prefix(2))).font(.caption.weight(.bold)).foregroundColor(.white)
+                        }
+                        .frame(width: 40, height: 40)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(artist.name).font(.subheadline.weight(.semibold)).foregroundColor(.primary)
+                            Text(artist.tag).font(.caption2).foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").foregroundColor(.secondary)
+                    }
+                }
+            }.listStyle(.plain)
         }
     }
 

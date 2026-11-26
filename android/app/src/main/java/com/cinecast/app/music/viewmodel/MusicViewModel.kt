@@ -31,6 +31,14 @@ data class MusicSearchUiState(
     val error: String? = null
 )
 
+data class ArtistDetailUiState(
+    val artistName: String = "",
+    val artistTag: String = "",
+    val isLoading: Boolean = false,
+    val tracks: List<MusicTrack> = emptyList(),
+    val error: String? = null
+)
+
 data class MusicPlayerUiState(
     val queue: List<MusicTrack> = emptyList(),
     val currentIndex: Int = -1,
@@ -68,8 +76,13 @@ class MusicViewModel : ViewModel() {
     private val _searchState = MutableStateFlow(MusicSearchUiState())
     val searchState: StateFlow<MusicSearchUiState> = _searchState.asStateFlow()
 
+    private val _artistDetailState = MutableStateFlow(ArtistDetailUiState())
+    val artistDetailState: StateFlow<ArtistDetailUiState> = _artistDetailState.asStateFlow()
+
     private val _playerState = MutableStateFlow(MusicPlayerUiState())
     val playerState: StateFlow<MusicPlayerUiState> = _playerState.asStateFlow()
+
+    private var artistJob: Job? = null
 
     private val _isImporting = MutableStateFlow(false)
     val isImporting: StateFlow<Boolean> = _isImporting.asStateFlow()
@@ -248,6 +261,122 @@ class MusicViewModel : ViewModel() {
     fun clearSearch() {
         searchJob?.cancel()
         _searchState.value = MusicSearchUiState(searchAllSources = _searchState.value.searchAllSources)
+    }
+
+    // ==================== Artist Category & Precision Artist Query ====================
+
+    fun querySongsByArtist(artistName: String, artistTag: String = "") {
+        val name = artistName.trim()
+        if (name.isBlank()) return
+        val targets = getEnabledSources().filter { it.searchable }.sortedBy {
+            when (it.sourceType) {
+                MusicSourceType.GDSTUDIO_API -> 0
+                MusicSourceType.AUDIUS_API -> 1
+                MusicSourceType.METING_API -> 2
+                MusicSourceType.RADIO_BROWSER -> 3
+                MusicSourceType.M3U_AUDIO -> 4
+            }
+        }.take(6)
+
+        artistJob?.cancel()
+        artistJob = viewModelScope.launch {
+            _artistDetailState.value = ArtistDetailUiState(
+                artistName = name,
+                artistTag = artistTag,
+                isLoading = true,
+                tracks = emptyList(),
+                error = null
+            )
+            val lock = Any()
+            val acc = mutableListOf<MusicTrack>()
+            val jobs = targets.map { src ->
+                launch {
+                    val found = withTimeoutOrNull(10000L) {
+                        runCatching { musicEngine.search(src, name, 1) }.getOrDefault(emptyList())
+                    }.orEmpty()
+                    if (found.isNotEmpty()) {
+                        val snap = synchronized(lock) {
+                            acc.addAll(found)
+                            acc.distinctBy { "${it.title.lowercase()}_${it.artist.lowercase()}_${it.sourceId}" }
+                                .sortedByDescending { t ->
+                                    when {
+                                        t.artist.equals(name, ignoreCase = true) -> 4
+                                        t.artist.contains(name, ignoreCase = true) -> 3
+                                        t.title.contains(name, ignoreCase = true) -> 2
+                                        else -> 1
+                                    }
+                                }
+                        }
+                        _artistDetailState.value = _artistDetailState.value.copy(
+                            tracks = snap,
+                            error = null
+                        )
+                    }
+                }
+            }
+            jobs.joinAll()
+            val finalTracks = _artistDetailState.value.tracks
+            _artistDetailState.value = _artistDetailState.value.copy(
+                isLoading = false,
+                error = if (finalTracks.isEmpty()) "暂未查到「$name」的歌曲，可在「音乐源」页启用更多开源曲库" else null
+            )
+        }
+    }
+
+    fun clearArtistDetail() {
+        artistJob?.cancel()
+        _artistDetailState.value = ArtistDetailUiState()
+    }
+
+    companion object {
+        val curatedArtists: List<MusicArtistProfile> = listOf(
+            // 华语男歌手
+            MusicArtistProfile("周杰伦", ArtistCategory.CN_MALE, "华语流行天王", 0xFF1A73E8),
+            MusicArtistProfile("陈奕迅", ArtistCategory.CN_MALE, "粤语/国语金曲", 0xFF3949AB),
+            MusicArtistProfile("林俊杰", ArtistCategory.CN_MALE, "行走的CD", 0xFF00897B),
+            MusicArtistProfile("薛之谦", ArtistCategory.CN_MALE, "深情创作歌手", 0xFF5E35B1),
+            MusicArtistProfile("陶喆", ArtistCategory.CN_MALE, "华语 R&B 教父", 0xFFD81B60),
+            MusicArtistProfile("李荣浩", ArtistCategory.CN_MALE, "独立制作人", 0xFF455A64),
+            MusicArtistProfile("毛不易", ArtistCategory.CN_MALE, "治愈民谣男声", 0xFF2E7D32),
+            MusicArtistProfile("周深", ArtistCategory.CN_MALE, "天籁国风声线", 0xFF0288D1),
+            MusicArtistProfile("许嵩", ArtistCategory.CN_MALE, "国风原创才子", 0xFF6D4C41),
+            MusicArtistProfile("汪苏泷", ArtistCategory.CN_MALE, "人气唱作人", 0xFFF4511E),
+            // 华语女歌手
+            MusicArtistProfile("邓紫棋", ArtistCategory.CN_FEMALE, "铁肺创作天后", 0xFFD93025),
+            MusicArtistProfile("王菲", ArtistCategory.CN_FEMALE, "华语传奇天后", 0xFF7B1FA2),
+            MusicArtistProfile("孙燕姿", ArtistCategory.CN_FEMALE, "治愈系天后", 0xFF00796B),
+            MusicArtistProfile("蔡依林", ArtistCategory.CN_FEMALE, "亚洲流行舞后", 0xFFC2185B),
+            MusicArtistProfile("张韶涵", ArtistCategory.CN_FEMALE, "励志清亮高音", 0xFF1976D2),
+            MusicArtistProfile("梁静茹", ArtistCategory.CN_FEMALE, "情歌天后", 0xFFE65100),
+            MusicArtistProfile("单依纯", ArtistCategory.CN_FEMALE, "新生代灵魂歌者", 0xFF512DA8),
+            MusicArtistProfile("郁可唯", ArtistCategory.CN_FEMALE, "影视 OST 女王", 0xFF0097A7),
+            // 华语组合/乐队
+            MusicArtistProfile("五月天", ArtistCategory.CN_GROUP, "华语摇滚天团", 0xFF1565C0),
+            MusicArtistProfile("Beyond", ArtistCategory.CN_GROUP, "殿堂级粤语乐队", 0xFFC62828),
+            MusicArtistProfile("告五人", ArtistCategory.CN_GROUP, "新世代人气乐团", 0xFF2E7D32),
+            MusicArtistProfile("凤凰传奇", ArtistCategory.CN_GROUP, "国民律动组合", 0xFFEF6C00),
+            MusicArtistProfile("S.H.E", ArtistCategory.CN_GROUP, "华语经典女团", 0xFFAD1457),
+            MusicArtistProfile("草东没有派对", ArtistCategory.CN_GROUP, "独立摇滚乐队", 0xFF37474F),
+            // 欧美流行
+            MusicArtistProfile("Taylor Swift", ArtistCategory.WESTERN, "全球流行天后", 0xFF8E24AA),
+            MusicArtistProfile("Ed Sheeran", ArtistCategory.WESTERN, "英伦吉他唱作人", 0xFFE64A19),
+            MusicArtistProfile("Coldplay", ArtistCategory.WESTERN, "英伦摇滚天团", 0xFF1E88E5),
+            MusicArtistProfile("Adele", ArtistCategory.WESTERN, "灵魂实力唱将", 0xFF4E342E),
+            MusicArtistProfile("The Weeknd", ArtistCategory.WESTERN, "复古合成器 R&B", 0xFFB71C1C),
+            MusicArtistProfile("Alan Walker", ArtistCategory.WESTERN, "电音制作人", 0xFF00838F),
+            // 日韩歌手
+            MusicArtistProfile("YOASOBI", ArtistCategory.JP_KR, "日本现象级双人组", 0xFFD81B60),
+            MusicArtistProfile("米津玄师", ArtistCategory.JP_KR, "全能创作鬼才", 0xFF283593),
+            MusicArtistProfile("IU", ArtistCategory.JP_KR, "韩国国民创作女声", 0xFF7B1FA2),
+            MusicArtistProfile("RADWIMPS", ArtistCategory.JP_KR, "动漫电影原声乐队", 0xFF0277BD),
+            MusicArtistProfile("BLACKPINK", ArtistCategory.JP_KR, "人气 K-Pop 女团", 0xFFC2185B),
+            // 轻音乐/纯音
+            MusicArtistProfile("久石让", ArtistCategory.INSTRUMENTAL, "宫崎骏电影配乐大师", 0xFF2E7D32),
+            MusicArtistProfile("坂本龙一", ArtistCategory.INSTRUMENTAL, "现代钢琴与电子大师", 0xFF455A64),
+            MusicArtistProfile("班得瑞", ArtistCategory.INSTRUMENTAL, "自然治愈轻音乐", 0xFF00695C),
+            MusicArtistProfile("理查德·克莱德曼", ArtistCategory.INSTRUMENTAL, "浪漫钢琴王子", 0xFF1565C0),
+            MusicArtistProfile("泽野弘之", ArtistCategory.INSTRUMENTAL, "史诗动漫燃系配乐", 0xFFBF360C)
+        )
     }
 
     // ==================== Playback, Queue, Synced Lyrics & Source Switch ====================
