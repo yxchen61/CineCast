@@ -615,9 +615,9 @@ final class NovelStore: ObservableObject {
                 group: "备用网页规则源 (按需手动开启)",
                 sourceType: .LEGADO_HTML,
                 enabled: false,
-                charset: "GB2312",
                 searchUrl: "/e/search/index.php,{\"charset\":\"gb2312\",\"method\":\"POST\",\"body\":\"keyboard={{key}}&show=title&classid=0\"}",
-                exploreUrl: "同人小说::/tongren/\n常规小说::/changgui/"
+                exploreUrl: "同人小说::/tongren/\n常规小说::/changgui/",
+                charset: "GB2312"
             )
         ]
     }

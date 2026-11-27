@@ -2,6 +2,16 @@ name: Build CineCast iOS IPA
 
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: 'macOS Runner'
+        required: false
+        default: 'macos-15-intel'
+        type: choice
+        options:
+          - macos-15-intel
+          - macos-26
+          - macos-15
   push:
     branches: [ main, master ]
     tags: [ 'v*' ]
@@ -11,7 +21,7 @@ permissions:
 
 jobs:
   build-ios:
-    runs-on: macos-15
+    runs-on: ${{ inputs.runner || 'macos-15-intel' }}
     env:
       IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
       IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
